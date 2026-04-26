@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# local env
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# local tooling
+.claude/
+.playwright-cli/
