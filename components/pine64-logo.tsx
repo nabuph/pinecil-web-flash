@@ -1,3 +1,5 @@
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export function Pine64Logo({
   className,
   size = 18,
@@ -14,7 +16,7 @@ export function Pine64Logo({
       aria-hidden={variant === "logotype" ? "true" : undefined}
       className={variant === "mark" ? className : undefined}
       height={size}
-      src="/pine64-pinecone.svg"
+      src={`${BASE_PATH}/pine64-pinecone.svg`}
       width={width}
     />
   );

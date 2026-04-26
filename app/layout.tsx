@@ -13,14 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"]
 });
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const metadata: Metadata = {
   title: "Pinecil Web Flash",
   description: "Browser-first firmware, boot-logo, and Bluetooth utility for Pinecil soldering irons.",
   applicationName: "Pinecil Web Flash",
   icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
-    apple: "/icon.svg"
+    icon: `${basePath}/icon.svg`,
+    shortcut: `${basePath}/icon.svg`,
+    apple: `${basePath}/icon.svg`
   },
   appleWebApp: {
     capable: true,

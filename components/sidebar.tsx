@@ -85,16 +85,17 @@ export function Sidebar({
           const disabledReason = modeAvailability[value];
           return (
             <button
+              aria-label={label}
               aria-pressed={mode === value}
               className="sidebar-nav-item"
               disabled={Boolean(disabledReason)}
               key={value}
               onClick={() => onMode(value)}
-              title={disabledReason}
+              title={disabledReason ?? label}
               type="button"
             >
               <Icon size={15} />
-              {label}
+              <span className="sidebar-nav-label">{label}</span>
             </button>
           );
         })}

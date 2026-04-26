@@ -33,6 +33,9 @@ jobs:
           # For a project page (username.github.io/repo-name), set this to /repo-name.
           # For a user/org page (username.github.io), remove this line.
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          # Hide the demo (mock device) buttons on the live site.
+          # Local `npm run dev` and `npm run build` keep them.
+          NEXT_PUBLIC_DISABLE_DEMO: "true"
 
       - uses: actions/upload-pages-artifact@v3
         with:

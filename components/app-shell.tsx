@@ -37,6 +37,10 @@ const initialLogs: LogLine[] = [
   { time: "--:--:--", level: "WARN", message: "Use a Chromium desktop browser for WebUSB, Web Serial, and Web Bluetooth." }
 ];
 
+// Demo (mock device) controls are hidden on production builds when
+// NEXT_PUBLIC_DISABLE_DEMO is set. Local dev and `npm run build` keep them.
+const SHOW_DEMO = process.env.NEXT_PUBLIC_DISABLE_DEMO !== "true";
+
 function isAnimatedImage(file: File) {
   return file.type.includes("gif") || file.type.includes("apng") || /\.apng$/i.test(file.name);
 }
@@ -127,9 +131,11 @@ function WorkspaceSplash({
                     Connect USB
                   </button>
                 ) : null}
-                <button className="btn btn-icon" aria-label="USB demo" disabled={busy} onClick={onConnectDemo} type="button">
-                  <Play size={14} />
-                </button>
+                {SHOW_DEMO ? (
+                  <button className="btn btn-icon" aria-label="USB demo" disabled={busy} onClick={onConnectDemo} type="button">
+                    <Play size={14} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </section>
@@ -148,9 +154,11 @@ function WorkspaceSplash({
                   {busy ? <Loader2 className="spin" size={14} /> : <Bluetooth size={14} />}
                   Connect Bluetooth
                 </button>
-                <button className="btn btn-icon" aria-label="Bluetooth demo" disabled={busy} onClick={onConnectBluetoothDemo} type="button">
-                  <Play size={14} />
-                </button>
+                {SHOW_DEMO ? (
+                  <button className="btn btn-icon" aria-label="Bluetooth demo" disabled={busy} onClick={onConnectBluetoothDemo} type="button">
+                    <Play size={14} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </section>

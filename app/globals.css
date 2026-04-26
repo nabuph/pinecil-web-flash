@@ -2106,10 +2106,34 @@ input[type="checkbox"] {
 @media (max-width: 580px) {
   .main-content { padding: 16px; }
 
+  /* Collapse the sidebar mode nav to icons-only on narrow screens so all
+     four modes stay visible without overflow. */
+  .sidebar-nav {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .sidebar-nav-item {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    padding: 10px 6px;
+    gap: 0;
+  }
+  .sidebar-nav-label {
+    display: none;
+  }
+
   .mobile-connection-header {
     align-items: stretch;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .mobile-device-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
   }
 
   .mobile-connection-actions {
