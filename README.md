@@ -36,43 +36,13 @@ Use the USB-C port (not the DC barrel jack). Hold the **`-`** button while plugg
 
 Requires a Pinecil **V2** running IronOS **2.21 or newer**, powered normally (not in flash mode). On the iron: Settings → Bluetooth → set to **`+`** for full read/write access (`R` is read-only).
 
-## Local development
-
-```bash
-npm install
-npm run dev
-```
-
-Open http://127.0.0.1:3000. The local dev build keeps the demo (mock device) buttons enabled so you can iterate on the UI without an iron plugged in.
-
-### Useful scripts
-
-```bash
-npm run dev         # Next.js dev server
-npm run build       # Static export to ./out
-npm run typecheck   # TypeScript only, no emit
-npm test            # Vitest run once
-npm run test:watch  # Vitest watch mode
-```
-
-### Tech stack
+## Tech stack
 
 - [Next.js](https://nextjs.org/) 16 (App Router) with `output: "export"` for fully static deployment
 - React 19
 - Native [WebUSB](https://wicg.github.io/webusb/), [Web Serial](https://wicg.github.io/serial/), and [Web Bluetooth](https://webbluetoothcg.github.io/web-bluetooth/) — no third-party hardware libraries
 - [`fflate`](https://github.com/101arrowz/fflate) for unzipping IronOS firmware archives
 - [Vitest](https://vitest.dev/) for unit tests covering the DFU/BLISP/BLE protocol logic
-
-## Deployment
-
-The site is published to GitHub Pages on every push to `main` via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). The workflow builds the Next.js app to a static `out/` directory and uploads it as a Pages artifact.
-
-Two env vars control the production build:
-
-| Variable | Purpose |
-|---|---|
-| `NEXT_PUBLIC_BASE_PATH` | Sub-path the site is served under (e.g. `/pinecil-web-flash`). Required for project pages. |
-| `NEXT_PUBLIC_DISABLE_DEMO` | Set to `"true"` to hide the demo (mock device) buttons on the live site. |
 
 ## Disclaimer
 
