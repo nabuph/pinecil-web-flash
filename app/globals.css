@@ -2126,6 +2126,7 @@ input[type="checkbox"] {
   .mobile-connection-header {
     align-items: stretch;
     flex-direction: column;
+    justify-content: center;
     gap: 8px;
   }
 
@@ -2138,6 +2139,12 @@ input[type="checkbox"] {
 
   .mobile-connection-actions {
     justify-content: stretch;
+  }
+
+  /* Hide the actions row entirely when it has no buttons, so the
+     header gap doesn't push the single device-name line off-center. */
+  .mobile-connection-actions:empty {
+    display: none;
   }
 
   .mobile-connection-actions .btn {
