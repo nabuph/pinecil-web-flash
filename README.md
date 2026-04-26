@@ -8,7 +8,7 @@ A browser-based flashing and configuration tool for the [Pine64 Pinecil](https:/
 
 The two existing options for managing a Pinecil require installing software on your machine:
 
-- **[PineflashTool](https://github.com/Spagett1/PineFlashTool)** — a desktop GUI app you have to download, install, and trust to run on your operating system.
+- **[PineFlash](https://github.com/Spagett1/PineFlash)** — a desktop GUI app you have to download, install, and trust to run on your operating system.
 - **`dfu-util` / `blisp` from the command line** — direct flashing via the terminal. Powerful, but requires installing tooling, knowing the right commands, and managing driver/permission setup yourself.
 
 **Pinecil Web Flash does it from any Chromium-based browser.** No install, no terminal, no platform-specific binary. The page connects directly to your iron over [WebUSB](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API), [Web Serial](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API), and [Web Bluetooth](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) — flashing, validation, and BLE I/O all happen client-side in your browser tab.
