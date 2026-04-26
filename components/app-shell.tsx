@@ -285,28 +285,57 @@ export function AppShell() {
     addLog("INFO", "Browser capability check completed.");
   }, [addLog]);
 
-  // Load releases
+  // Load releases. The static deploy bundles a same-origin releases.json (see
+  // scripts/bundle-releases.mjs) because release-assets.githubusercontent.com
+  // does not send CORS headers, so the browser cannot fetch GitHub release
+  // downloads directly. We try the bundled catalog first; if it is missing
+  // (e.g. dev build without the bundler) we fall back to the GitHub API for
+  // listing only — asset downloads will still error cleanly without bricking
+  // the iron because validation happens before any flash write.
   useEffect(() => {
     let alive = true;
-    fetch("https://api.github.com/repos/Ralim/IronOS/releases?per_page=30", {
-      headers: { Accept: "application/vnd.github+json" }
-    })
-      .then((res) => {
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+    const prefix = (path: string) => (path.startsWith("http") ? path : `${basePath}/${path}`);
+
+    const applyReleases = (data: Parameters<typeof normalizeReleases>[0], source: string) => {
+      if (!alive) return;
+      const releases = normalizeReleases(data).map((release) => ({
+        ...release,
+        assets: release.assets.map((asset) => ({
+          ...asset,
+          downloadUrl: asset.downloadUrl ? prefix(asset.downloadUrl) : asset.downloadUrl
+        }))
+      }));
+      if (!releases.length) return;
+      setReleases(releases);
+      const stable = releases.find((r) => r.channel === "stable") ?? releases[0];
+      setSelectedReleaseTag(stable.tag);
+      addLog("OK", `Loaded ${releases.length} IronOS releases (${source}).`);
+    };
+
+    (async () => {
+      try {
+        const res = await fetch(`${basePath}/releases.json`, { cache: "no-cache" });
+        if (res.ok) {
+          const payload = (await res.json()) as { releases: Parameters<typeof normalizeReleases>[0] };
+          applyReleases(payload.releases, "bundled");
+          return;
+        }
+      } catch {
+        // fall through to remote fetch
+      }
+      try {
+        const res = await fetch("https://api.github.com/repos/Ralim/IronOS/releases?per_page=30", {
+          headers: { Accept: "application/vnd.github+json" }
+        });
         if (!res.ok) throw new Error(`GitHub releases returned ${res.status}`);
-        return res.json() as Promise<Parameters<typeof normalizeReleases>[0]>;
-      })
-      .then((data) => {
-        if (!alive) return;
-        const releases = normalizeReleases(data);
-        if (!releases.length) return;
-        setReleases(releases);
-        const stable = releases.find((r) => r.channel === "stable") ?? releases[0];
-        setSelectedReleaseTag(stable.tag);
-        addLog("OK", `Loaded ${releases.length} IronOS releases.`);
-      })
-      .catch((err) => {
+        const data = (await res.json()) as Parameters<typeof normalizeReleases>[0];
+        applyReleases(data, "github.com");
+        addLog("WARN", "Using live GitHub catalog; asset downloads will fail in the browser due to CORS. Run scripts/bundle-releases.mjs before building.");
+      } catch (err) {
         addLog("WARN", `${err instanceof Error ? err.message : "Release fetch failed"}; using local sample catalog.`);
-      });
+      }
+    })();
     return () => { alive = false; };
   }, [addLog]);
 
@@ -319,8 +348,7 @@ export function AppShell() {
     }
   }, [channelReleases, compatibleReleases, releaseChannel, selectedReleaseTag]);
 
-  const downloadAssetBytes = useCallback(async (assetId: number, fallback: () => Uint8Array, downloadUrl?: string) => {
-    if (assetId < 1000) return fallback();
+  const downloadAssetBytes = useCallback(async (downloadUrl: string | undefined): Promise<Uint8Array> => {
     if (!downloadUrl) throw new Error("No download URL available for this asset.");
     const res = await fetch(downloadUrl);
     if (!res.ok) throw new Error(`Asset download failed with ${res.status}.`);
@@ -334,7 +362,11 @@ export function AppShell() {
       setLanguages(DEFAULT_LANGUAGES);
       return;
     }
-    downloadAssetBytes(metadataAsset.assetId, () => new Uint8Array(), metadataAsset.downloadUrl)
+    if (!metadataAsset.downloadUrl) {
+      setLanguages(DEFAULT_LANGUAGES);
+      return;
+    }
+    downloadAssetBytes(metadataAsset.downloadUrl)
       .then((bytes) => {
         if (!alive || !bytes.length) return;
         const parsed = parseLanguagesFromMetadata(bytes, activeModel);
@@ -470,8 +502,13 @@ export function AppShell() {
       const bytes = makeMockFirmware(activeModel, language);
       return prepareInstall(target, { kind: "firmware", fileName: firmwareFileName(activeModel, language), bytes, releaseTag: selectedRelease.tag, language });
     }
-    const archive = await downloadAssetBytes(firmwareAsset.assetId, () => makeMockFirmware(activeModel, language), firmwareAsset.downloadUrl);
-    const bytes = firmwareAsset.assetId < 1000 ? archive : extractFirmwareFromZip(archive, activeModel, language);
+    if (!firmwareAsset.downloadUrl) {
+      throw new Error("This firmware release has no downloadable asset. Rebuild with the release bundler enabled.");
+    }
+    const archive = await downloadAssetBytes(firmwareAsset.downloadUrl);
+    const bytes = firmwareAsset.fileName.toLowerCase().endsWith(".zip")
+      ? extractFirmwareFromZip(archive, activeModel, language)
+      : archive;
     return prepareInstall(target, { kind: "firmware", fileName: firmwareFileName(activeModel, language), bytes, releaseTag: selectedRelease.tag, language });
   }, [activeModel, downloadAssetBytes, firmwareAsset, language, selectedRelease, target]);
 
