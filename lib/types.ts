@@ -41,6 +41,11 @@ export interface FlashTarget {
   // version, not the IronOS firmware version — IronOS is not running while
   // the chip is in bootloader mode.
   bootRomVersion?: string;
+  // IronOS version string read from flash via the eflash_loader during
+  // connect (e.g. "v2.23"). Lets the user compare the version they're about
+  // to flash against the one currently installed. Undefined if the read
+  // failed or no recognizable version string was found.
+  installedFirmwareVersion?: string;
   connectedAt: string;
 }
 

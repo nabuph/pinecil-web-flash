@@ -81,6 +81,8 @@ interface SerialPort {
   close(): Promise<void>;
   getInfo(): SerialPortInfo;
   setSignals?(signals: { dataTerminalReady?: boolean; requestToSend?: boolean; break?: boolean }): Promise<void>;
+  addEventListener(type: "connect" | "disconnect", listener: () => void): void;
+  removeEventListener(type: "connect" | "disconnect", listener: () => void): void;
 }
 
 interface SerialOptions {

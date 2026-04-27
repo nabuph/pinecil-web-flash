@@ -32,7 +32,8 @@ export function Sidebar({
   bluetoothLabel,
   bluetoothDeviceName,
   busy,
-  versionInfo,
+  firmwareVersion,
+  bootRomVersion,
   modeAvailability,
   modeHelp,
   mode,
@@ -45,10 +46,14 @@ export function Sidebar({
   bluetoothLabel: string;
   bluetoothDeviceName?: string;
   busy: boolean;
-  // Either an IronOS firmware build id (over Bluetooth, or for the demo
-  // target) or a BL70x boot ROM version (over USB BLISP). Distinguished by
-  // the label so the prefix in the UI is accurate.
-  versionInfo?: { label: "Firmware" | "Boot ROM"; value: string };
+  // IronOS firmware version reported either by Bluetooth (running IronOS)
+  // or by reading flash via the eflash_loader during BLISP connect. For the
+  // demo target this is a faked string. Undefined if we couldn't determine
+  // it.
+  firmwareVersion?: string;
+  // BL70x boot ROM version reported during BLISP handshake. Only set when
+  // connected via USB in flash mode.
+  bootRomVersion?: string;
   modeAvailability: ModeAvailability;
   modeHelp: string;
   mode?: Mode;
@@ -67,7 +72,8 @@ export function Sidebar({
     ? `Pinecil ${model.toUpperCase()} connected via ${transportLabel}`
     : "No device connected";
   const modeLine = connected ? (target?.bootloader ? "Flash mode" : "Normal mode") : undefined;
-  const firmwareLine = versionInfo ? `${versionInfo.label} ${versionInfo.value}` : undefined;
+  const firmwareLine = firmwareVersion ? `Firmware ${firmwareVersion}` : undefined;
+  const bootRomLine = bootRomVersion ? `Boot ROM ${bootRomVersion}` : undefined;
 
   return (
     <aside className="sidebar">
@@ -115,9 +121,10 @@ export function Sidebar({
             </span>
             <span>{displayName}</span>
           </div>
-          {(firmwareLine || modeLine) ? (
+          {(firmwareLine || bootRomLine || modeLine) ? (
             <div className="sidebar-device-meta">
               {firmwareLine ? <div>{firmwareLine}</div> : null}
+              {bootRomLine ? <div>{bootRomLine}</div> : null}
               {modeLine ? <div>{modeLine}</div> : null}
             </div>
           ) : null}

@@ -36,6 +36,8 @@ describe("BLISP helpers", () => {
     const close = vi.fn();
     const port = {
       open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       close,
       getInfo: () => ({}),
       readable: new ReadableStream<Uint8Array>({
@@ -64,6 +66,8 @@ describe("BLISP helpers", () => {
     ];
     const port = {
       open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       close: vi.fn(async () => undefined),
       getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
       readable: new ReadableStream<Uint8Array>({

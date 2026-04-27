@@ -1,10 +1,10 @@
 import { parseDfuSeTargets } from "@/lib/protocol/dfu";
+import { findIronOsVersionInFlash, flashWriteChunkSize, loadEflashLoader } from "@/lib/protocol/blisp-eflash";
 import type { FlashInput, FlashProgress, FlashResult, FlashTarget, FlasherBackend } from "@/lib/types";
 
 const DEFAULT_BAUD_RATE = 460_800;
 const BL70X_FLASH_MAP_ADDR = 0x23000000;
 const PINECIL_V2_FIRMWARE_OFFSET = 0x2000;
-const MAX_WRITE_CHUNK = 2052;
 type Bytes = Uint8Array<ArrayBufferLike>;
 
 type BlispResponse = "OK" | "PD";
@@ -36,6 +36,18 @@ function le32(value: number): Uint8Array {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Fetches the BL70x eflash_loader.bin from the same-origin static path. The
+// bytes ship with the deploy under public/protocol/. Same-origin avoids the
+// CORS problem we'd hit reaching out to GitHub for it. Tests can replace
+// WebSerialBlispFlasher.eflashLoaderProvider with a mock to avoid I/O.
+async function defaultEflashLoaderProvider(): Promise<Uint8Array> {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const url = `${basePath}/protocol/bl70x_eflash_loader.bin`;
+  const res = await fetch(url, { cache: "force-cache" });
+  if (!res.ok) throw new Error(`Failed to fetch eflash_loader (${res.status} ${res.statusText}).`);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 // Scan a handshake response for the bytes 'O' 'K' anywhere in the buffer.
@@ -236,16 +248,46 @@ export class WebSerialBlispFlasher implements FlasherBackend {
   private port?: SerialPort;
   private session?: SerialBlispSession;
   private bootloaderReady = false;
+  // Set true once the eflash_loader RAM app is running and we've completed
+  // the post-load handshake against it. The eflash_loader exposes the actual
+  // flash erase/write/read commands that the bare BL70x ROM does not.
+  private eflashLoaderReady = false;
   private bootRomVersion?: string;
+  private installedFirmwareVersion?: string;
+  // Optional injection seam used by tests so they don't have to mock fetch.
+  // Production runtime fetches `${basePath}/protocol/bl70x_eflash_loader.bin`.
+  static eflashLoaderProvider: () => Promise<Uint8Array> = defaultEflashLoaderProvider;
+  // Static log sink so app-shell can surface BLISP-internal progress and
+  // soft errors without us having to plumb a callback through every method.
+  // Defaults to a no-op; app-shell installs an addLog adapter at mount.
+  static onLog: (level: "INFO" | "OK" | "WARN" | "ERROR", message: string) => void =
+    () => undefined;
+  // Fired when the underlying SerialPort raises a 'disconnect' event (e.g.
+  // the user pulled the USB cable). app-shell uses this to clear connected
+  // state instead of waiting for the next operation to fail.
+  static onDisconnect: () => void = () => undefined;
+  private disconnectListener?: () => void;
 
   async connect(): Promise<FlashTarget> {
     if (!navigator.serial) throw new Error("Web Serial is not available in this browser.");
     this.port = await navigator.serial.requestPort();
     this.session = new SerialBlispSession(this.port);
+    // Notify the app immediately when the cable is unplugged. Without this
+    // the UI keeps showing "Connected" until the next operation fails.
+    this.disconnectListener = () => {
+      WebSerialBlispFlasher.onLog("WARN", "USB cable disconnected.");
+      WebSerialBlispFlasher.onDisconnect();
+    };
+    this.port.addEventListener("disconnect", this.disconnectListener);
     try {
       await this.session.open();
       await this.handshake();
       this.bootloaderReady = true;
+      // Try to load the eflash_loader so we can read the currently-installed
+      // IronOS firmware version (and so the actual flash() path doesn't have
+      // to do this work later). Failure here is non-fatal — connect still
+      // succeeds with just the boot ROM info, and flash() will retry.
+      await this.tryLoadEflashLoaderAndReadVersion();
     } catch (err) {
       await this.close().catch(() => undefined);
       // The BL70x ROM bootloader only accepts the handshake for a few seconds
@@ -274,6 +316,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       portName: serialPortLabel(this.port),
       bootloader: "BL70x",
       bootRomVersion: this.bootRomVersion,
+      installedFirmwareVersion: this.installedFirmwareVersion,
       connectedAt: new Date().toISOString()
     };
   }
@@ -287,6 +330,17 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     if (!this.bootloaderReady) {
       await this.handshake(onProgress);
       this.bootloaderReady = true;
+    }
+    if (!this.eflashLoaderReady) {
+      // connect() tries to load the eflash_loader and may have failed quietly
+      // (e.g. the static asset was missing). Try again here so a flash
+      // attempt either fully succeeds or surfaces the real reason.
+      onProgress({ phase: "detect", message: "Loading eflash_loader for flash access", current: 0, total });
+      const bytes = await WebSerialBlispFlasher.eflashLoaderProvider();
+      await loadEflashLoader(this.session, bytes, onProgress);
+      await delay(150);
+      await this.eflashHandshake();
+      this.eflashLoaderReady = true;
     } else {
       onProgress({ phase: "detect", message: "BL70x flash session ready", current: 1, total: 1 });
     }
@@ -304,34 +358,65 @@ export class WebSerialBlispFlasher implements FlasherBackend {
   }
 
   async close(): Promise<void> {
+    if (this.port && this.disconnectListener) {
+      try { this.port.removeEventListener("disconnect", this.disconnectListener); } catch { /* ignore */ }
+    }
+    this.disconnectListener = undefined;
     await this.session?.close();
     this.session = undefined;
     this.port = undefined;
     this.bootloaderReady = false;
+    this.eflashLoaderReady = false;
     this.bootRomVersion = undefined;
+    this.installedFirmwareVersion = undefined;
   }
 
   private async handshake(onProgress?: (event: FlashProgress) => void) {
-    if (!this.session) throw new Error("No BLISP serial session is connected.");
-    onProgress?.({ phase: "detect", message: "Sending BLISP handshake", current: 0, total: 1 });
+    await this.runHandshake({ inEflashLoader: false, getBootInfo: true, onProgress });
+  }
 
-    // BL70x over USB CDC needs a wake-up probe before the 'U' burst, otherwise
-    // the ROM bootloader stays silent and the read times out. blisp's lib
-    // sends "BOUFFALOLAB5555RESET\0\0" first, then a baud-rate-locking burst
-    // of 0x55 ('U') bytes (~138 bytes for BL70x at 460800 baud — capped at
-    // 600). It then reads up to 20 bytes and scans for "OK" anywhere in the
-    // response, retrying up to 5 times. We mirror that exactly.
+  // Re-handshakes against the eflash_loader RAM app after it has been loaded
+  // and started. Skip the BOUFFALOLAB5555RESET probe (that's only used by
+  // the BL70x ROM) and skip the get_boot_info call (the loader doesn't
+  // implement it the same way). Just lock baud with the 'U' burst and look
+  // for OK.
+  private async eflashHandshake() {
+    await this.runHandshake({ inEflashLoader: true, getBootInfo: false });
+  }
+
+  private async runHandshake(options: {
+    inEflashLoader: boolean;
+    getBootInfo: boolean;
+    onProgress?: (event: FlashProgress) => void;
+  }): Promise<void> {
+    if (!this.session) throw new Error("No BLISP serial session is connected.");
+    const { inEflashLoader, getBootInfo, onProgress } = options;
+    onProgress?.({
+      phase: "detect",
+      message: inEflashLoader ? "Re-handshaking with eflash_loader" : "Sending BLISP handshake",
+      current: 0,
+      total: 1
+    });
+
+    // BL70x over USB CDC needs a wake-up probe before the 'U' burst when
+    // talking to the ROM, otherwise it stays silent. The eflash_loader
+    // accepts the 'U' burst alone. blisp's lib reads up to 20 bytes and
+    // scans for "OK" anywhere in the response, retrying up to 5 times. We
+    // mirror that exactly.
     // See https://github.com/pine64/blisp/blob/master/lib/blisp.c#L190
     const RESET_PROBE = new TextEncoder().encode("BOUFFALOLAB5555RESET\0\0");
     const U_BURST = new Uint8Array(600).fill(0x55);
 
     let lastResponse = new Uint8Array();
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      await this.session.write(RESET_PROBE);
-      // blisp calls sp_drain on macOS between writes to make sure the kernel
-      // has actually pushed the bytes onto the wire before the next chunk.
-      // Web Serial has no drain primitive, so a small delay approximates it.
-      await delay(20);
+      if (!inEflashLoader) {
+        await this.session.write(RESET_PROBE);
+        // blisp calls sp_drain on macOS between writes to make sure the
+        // kernel has actually pushed the bytes onto the wire before the
+        // next chunk. Web Serial has no drain primitive, so a small delay
+        // approximates it.
+        await delay(20);
+      }
       await this.session.write(U_BURST);
       await delay(20);
       // Drain up to 20 bytes within 200ms. Stop early once we see "OK" so
@@ -351,19 +436,28 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       const view = new Uint8Array(accumulated);
       lastResponse = view;
       if (findOkInResponse(view) >= 0) {
-        const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true);
-        // First 4 bytes of the boot info payload are the BL70x ROM version.
-        // Stored on the instance so connect() can put it on the FlashTarget
-        // for the UI to display.
-        this.bootRomVersion = bootInfo.length >= 4
-          ? Array.from(bootInfo.slice(0, 4)).join(".")
-          : undefined;
-        onProgress?.({
-          phase: "detect",
-          message: `Boot ROM ${this.bootRomVersion ?? "detected"}`,
-          current: 1,
-          total: 1
-        });
+        if (getBootInfo) {
+          const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true);
+          // First 4 bytes of the boot info payload are the BL70x ROM
+          // version. Stored on the instance so connect() can put it on the
+          // FlashTarget for the UI to display.
+          this.bootRomVersion = bootInfo.length >= 4
+            ? Array.from(bootInfo.slice(0, 4)).join(".")
+            : undefined;
+          onProgress?.({
+            phase: "detect",
+            message: `Boot ROM ${this.bootRomVersion ?? "detected"}`,
+            current: 1,
+            total: 1
+          });
+        } else {
+          onProgress?.({
+            phase: "detect",
+            message: "eflash_loader handshake OK",
+            current: 1,
+            total: 1
+          });
+        }
         return;
       }
     }
@@ -371,6 +465,71 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       ? ` Last bytes: ${Array.from(lastResponse).map((b) => b.toString(16).padStart(2, "0")).join(" ")}.`
       : " No bytes received from the chip.";
     throw new Error(`Timed out reading from BLISP serial port.${tail}`);
+  }
+
+  // Loads the BL70x eflash_loader RAM app, re-handshakes against it, then
+  // reads a small slice of flash at the IronOS firmware offset to extract
+  // the currently installed version string. All failures are swallowed —
+  // the connection still succeeds with just the boot ROM info, and the
+  // flash() path will retry the load step on its own.
+  private async tryLoadEflashLoaderAndReadVersion(): Promise<void> {
+    if (!this.session) return;
+    const log = WebSerialBlispFlasher.onLog;
+    let step = "fetching eflash_loader";
+    try {
+      log("INFO", "Fetching BL70x eflash_loader…");
+      const bytes = await WebSerialBlispFlasher.eflashLoaderProvider();
+      log("INFO", `eflash_loader fetched (${bytes.length.toLocaleString()} bytes). Loading into RAM…`);
+      step = "loading eflash_loader into RAM";
+      await loadEflashLoader(this.session, bytes);
+      // The chip needs a beat to actually start the RAM app before it will
+      // respond to handshakes again.
+      await delay(150);
+      step = "re-handshaking against eflash_loader";
+      log("INFO", "Re-handshaking with eflash_loader…");
+      await this.eflashHandshake();
+      // Drain any trailing bytes the chip may have queued after its "OK" so
+      // the next command's response doesn't get mis-framed by leftover data.
+      await this.session.readChunk(40);
+      this.eflashLoaderReady = true;
+      log("OK", "eflash_loader is running.");
+      // Stream-read flash and stop as soon as we find the IronOS version
+      // string. The literal lives in .rodata which on Pinecil V2 firmware
+      // sits ~170 KiB into the binary, so the default scan covers the
+      // full 256 KiB firmware region. Reads are paced in 1 KiB chunks via
+      // the eflash_loader; we log progress every 32 KiB so the user sees
+      // something during what's otherwise a ~8–12 second scan.
+      step = "reading flash at IronOS firmware offset";
+      log("INFO", "Reading flash to detect installed IronOS version (this can take a few seconds)…");
+      let lastReported = 0;
+      const { version, bytesScanned } = await findIronOsVersionInFlash(
+        this.session,
+        PINECIL_V2_FIRMWARE_OFFSET,
+        undefined,
+        undefined,
+        (scanned, total) => {
+          if (scanned - lastReported >= 32 * 1024) {
+            lastReported = scanned;
+            log("INFO", `Scanning flash for version: ${(scanned / 1024) | 0} / ${(total / 1024) | 0} KiB`);
+          }
+        }
+      );
+      this.installedFirmwareVersion = version;
+      if (version) {
+        log("OK", `Installed IronOS version: ${version} (found within ${bytesScanned.toLocaleString()} bytes).`);
+      } else {
+        log(
+          "WARN",
+          `Scanned ${bytesScanned.toLocaleString()} bytes of flash and did not find a recognizable IronOS version string.`
+        );
+      }
+    } catch (err) {
+      // Non-fatal: connect() still resolves with boot ROM info only. But we
+      // surface the failing step so we can debug without sniffing serial.
+      this.eflashLoaderReady = false;
+      const message = err instanceof Error ? err.message : String(err);
+      log("WARN", `eflash_loader pipeline failed at: ${step}: ${message}`);
+    }
   }
 
   private async eraseAndWrite(
@@ -382,9 +541,10 @@ export class WebSerialBlispFlasher implements FlasherBackend {
   ) {
     if (!this.session) throw new Error("No BLISP serial session is connected.");
     await this.session.command(0x30, concatBytes([le32(address), le32(address + bytes.length)]), true);
+    const chunkSize = flashWriteChunkSize();
     let sent = 0;
-    for (let offset = 0; offset < bytes.length; offset += MAX_WRITE_CHUNK) {
-      const chunk = bytes.slice(offset, offset + MAX_WRITE_CHUNK);
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const chunk = bytes.slice(offset, offset + chunkSize);
       await this.session.command(0x31, concatBytes([le32(address + offset), chunk]), true);
       sent += chunk.length;
       onProgress({

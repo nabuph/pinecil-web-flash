@@ -229,6 +229,27 @@ export function AppShell() {
     setLogs((current) => [{ time: nowStamp(), level, message }, ...current].slice(0, 90));
   }, []);
 
+  // Forward BLISP-internal progress and soft errors (e.g. eflash_loader load
+  // failures during connect) into the activity log. Static hookup; the log
+  // module is shared across all WebSerialBlispFlasher instances.
+  useEffect(() => {
+    WebSerialBlispFlasher.onLog = addLog;
+    return () => {
+      WebSerialBlispFlasher.onLog = () => undefined;
+    };
+  }, [addLog]);
+
+  const disconnectListenerRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    // Wire physical-cable-unplug detection. The SerialPort's "disconnect"
+    // event fires from the BLISP backend; we react by clearing UI state the
+    // same way the user clicking Disconnect does.
+    WebSerialBlispFlasher.onDisconnect = () => disconnectListenerRef.current();
+    return () => {
+      WebSerialBlispFlasher.onDisconnect = () => undefined;
+    };
+  }, []);
+
   const appendBleTelemetry = useCallback((telemetry: Record<string, number>, at = Date.now()) => {
     setBleTelemetryHistory((history) => [...history, { at, telemetry: { ...telemetry } }].slice(-90));
   }, []);
@@ -535,6 +556,10 @@ export function AppShell() {
     setProgressMessage("Waiting for device access.");
     addLog("INFO", "Device disconnected from the app.");
   }, [addLog, clearBluetoothState, clearUsbState]);
+
+  // Keep the ref pointed at the current disconnectTarget for the static
+  // SerialPort 'disconnect' event handler to invoke on physical unplug.
+  disconnectListenerRef.current = disconnectTarget;
 
   const prepareFirmwareForTarget = useCallback(async () => {
     if (!target || !activeModel) throw new Error("Connect a Pinecil before flashing firmware.");
@@ -991,18 +1016,16 @@ export function AppShell() {
         ? "Normal powered mode is ready for Bluetooth settings while USB can remain connected for power."
         : ""
       : "Use USB flash mode for flashing. Use normal powered mode for Bluetooth settings.";
-  // What we show under the device name. Bluetooth gives us the IronOS build
-  // id; USB BLISP gives us the BL70x boot ROM version (IronOS isn't running
-  // in bootloader mode, so we can't read its version there). The sidebar uses
-  // the label to render the right prefix.
-  const sidebarVersionInfo: { label: "Firmware" | "Boot ROM"; value: string } | undefined =
+  // What we show under the device name. Bluetooth talks to running IronOS so
+  // we get a build id. USB BLISP loads the eflash_loader and reads flash to
+  // recover the installed IronOS version, plus reports the BL70x boot ROM
+  // version separately. Both lines render in the sidebar so the user can
+  // compare "currently installed" vs the version they're about to flash.
+  const sidebarFirmwareVersion =
     bleSnapshot?.buildId
-      ? { label: "Firmware", value: bleSnapshot.buildId }
-      : target?.transport === "demo"
-        ? { label: "Firmware", value: "v2.23-demo" }
-        : target?.bootRomVersion
-          ? { label: "Boot ROM", value: target.bootRomVersion }
-          : undefined;
+      ?? (target?.transport === "demo" ? "v2.23-demo" : undefined)
+      ?? target?.installedFirmwareVersion;
+  const sidebarBootRomVersion = target?.bootRomVersion;
   const mobileModel = target?.model ?? (bluetoothConnected ? "v2" : undefined);
   const mobileTransport = usbConnected ? "USB" : bluetoothConnected ? "Bluetooth" : undefined;
   const mobileDisplayName = mobileModel && mobileTransport
@@ -1032,7 +1055,8 @@ export function AppShell() {
         bluetoothLabel={bluetoothLabel}
         bluetoothDeviceName={bleSnapshot?.deviceName}
         busy={busy}
-        versionInfo={sidebarVersionInfo}
+        firmwareVersion={sidebarFirmwareVersion}
+        bootRomVersion={sidebarBootRomVersion}
         modeAvailability={modeAvailability}
         modeHelp={modeHelp}
         mode={mode}
