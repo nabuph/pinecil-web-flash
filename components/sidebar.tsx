@@ -32,7 +32,7 @@ export function Sidebar({
   bluetoothLabel,
   bluetoothDeviceName,
   busy,
-  firmwareVersion,
+  versionInfo,
   modeAvailability,
   modeHelp,
   mode,
@@ -45,7 +45,10 @@ export function Sidebar({
   bluetoothLabel: string;
   bluetoothDeviceName?: string;
   busy: boolean;
-  firmwareVersion?: string;
+  // Either an IronOS firmware build id (over Bluetooth, or for the demo
+  // target) or a BL70x boot ROM version (over USB BLISP). Distinguished by
+  // the label so the prefix in the UI is accurate.
+  versionInfo?: { label: "Firmware" | "Boot ROM"; value: string };
   modeAvailability: ModeAvailability;
   modeHelp: string;
   mode?: Mode;
@@ -64,7 +67,7 @@ export function Sidebar({
     ? `Pinecil ${model.toUpperCase()} connected via ${transportLabel}`
     : "No device connected";
   const modeLine = connected ? (target?.bootloader ? "Flash mode" : "Normal mode") : undefined;
-  const firmwareLine = firmwareVersion ? `Firmware ${firmwareVersion}` : undefined;
+  const firmwareLine = versionInfo ? `${versionInfo.label} ${versionInfo.value}` : undefined;
 
   return (
     <aside className="sidebar">

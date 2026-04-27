@@ -14,7 +14,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = "Ralim/IronOS";
-const STABLE_COUNT = 1;
+// Bundle the latest few stable releases so users can roll back without a
+// rebuild, plus the latest prerelease for adventurous testers.
+const STABLE_COUNT = 3;
 const PRERELEASE_COUNT = 1;
 const PER_PAGE = 30;
 const ASSET_NAMES = new Set(["Pinecil.zip", "Pinecilv2.zip", "metadata.zip"]);

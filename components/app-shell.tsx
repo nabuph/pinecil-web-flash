@@ -45,6 +45,16 @@ function isAnimatedImage(file: File) {
   return file.type.includes("gif") || file.type.includes("apng") || /\.apng$/i.test(file.name);
 }
 
+// requestPort()/requestDevice() reject with NotFoundError or AbortError when
+// the user dismisses the picker without choosing anything. Treat those as
+// "user changed their mind" rather than a real error so we don't spam the
+// activity log.
+function isUserCancellation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === "NotFoundError" || name === "AbortError";
+}
+
 function makeBleDrafts(snapshot: BleSnapshot): BleSettingDraft[] {
   return snapshot.settings.map((setting) => ({
     ...setting,
@@ -248,8 +258,19 @@ export function AppShell() {
   const metadataAsset = useMemo(() => findMetadataAsset(selectedRelease), [selectedRelease]);
   const selectedLanguage = languages.find((item) => item.code === language);
   const safetyReady = confirmations.every(Boolean);
+  // A release is "bundled" when its firmware asset is served from the same
+  // origin as the app (i.e. picked up from public/firmware/ via the bundler).
+  // Releases that only have remote https:// URLs cannot be flashed in the
+  // browser because release-assets.githubusercontent.com strips CORS, so we
+  // gate the Flash button on this and surface a warning callout.
+  const firmwareAssetIsBundled = Boolean(
+    firmwareAsset?.downloadUrl && !/^https?:\/\//i.test(firmwareAsset.downloadUrl)
+  );
   const flashReady = Boolean(
-    target && safetyReady && (!selectedRelease || selectedRelease.channel === "stable" || prereleaseConfirmed)
+    target &&
+      safetyReady &&
+      firmwareAssetIsBundled &&
+      (!selectedRelease || selectedRelease.channel === "stable" || prereleaseConfirmed)
   );
   const expectedFirmwareFile = activeModel
     ? firmwareFileName(activeModel, language)
@@ -460,29 +481,49 @@ export function AppShell() {
   }, [addLog, clearBluetoothState, clearUsbState]);
 
   const connectUsb = useCallback(async () => {
-    const attempts: Array<{ backend: FlasherBackend; label: string }> = [];
-    if (navigator.usb) attempts.push({ backend: new WebUsbDfuFlasher(), label: "WebUSB DFU" });
-    if (navigator.serial) attempts.push({ backend: new WebSerialBlispFlasher(), label: "Web Serial BLISP" });
-    if (!attempts.length) throw new Error("This browser does not expose WebUSB or Web Serial.");
-    const failures: string[] = [];
-    for (const attempt of attempts) {
+    if (!navigator.serial && !navigator.usb) throw new Error("This browser does not expose WebUSB or Web Serial.");
+
+    // Prompt order matters. Pinecil V2 (BL70x bootloader) shows up as a USB CDC
+    // serial port and only Web Serial BLISP can talk to it. Pinecil V1 in DFU
+    // mode shows up as a raw USB DFU device. Most Pinecils sold today are V2,
+    // so we try Web Serial first to avoid an empty WebUSB DFU picker that the
+    // user has to dismiss before getting to the right one. If they cancel the
+    // Web Serial picker we fall back to WebUSB DFU for V1 owners.
+    const finishConnect = (detected: FlashTarget) => {
+      clearBluetoothState();
+      setTarget(detected);
+      setMode("firmware");
+      setPhase("detect");
+      setProgressMessage(`${detected.label} connected.`);
+      addLog("OK", `${detected.label} connected via USB.`);
+      return detected;
+    };
+
+    if (navigator.serial) {
+      const blisp = new WebSerialBlispFlasher();
+      backendRef.current = blisp;
       try {
-        backendRef.current = attempt.backend;
-        const detected = await attempt.backend.connect();
-        clearBluetoothState();
-        setTarget(detected);
-        setMode("firmware");
-        setPhase("detect");
-        setProgressMessage(`${detected.label} connected.`);
-        addLog("OK", `${detected.label} connected via USB.`);
-        return detected;
+        return finishConnect(await blisp.connect());
       } catch (err) {
-        failures.push(`${attempt.label}: ${err instanceof Error ? err.message : "connection failed"}`);
-        await attempt.backend.close().catch(() => undefined);
+        await blisp.close().catch(() => undefined);
         backendRef.current = undefined;
+        if (!isUserCancellation(err)) throw err;
       }
     }
-    throw new Error(`Could not connect automatically. ${failures.join(" ")}`);
+
+    if (navigator.usb) {
+      const dfu = new WebUsbDfuFlasher();
+      backendRef.current = dfu;
+      try {
+        return finishConnect(await dfu.connect());
+      } catch (err) {
+        await dfu.close().catch(() => undefined);
+        backendRef.current = undefined;
+        if (!isUserCancellation(err)) throw err;
+      }
+    }
+
+    return undefined;
   }, [addLog, clearBluetoothState]);
 
   const disconnectTarget = useCallback(async () => {
@@ -682,7 +723,9 @@ export function AppShell() {
     try {
       await connectUsb();
     } catch (err) {
-      addLog("ERROR", err instanceof Error ? err.message : "USB connection failed.");
+      if (!isUserCancellation(err)) {
+        addLog("ERROR", err instanceof Error ? err.message : "USB connection failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -695,7 +738,9 @@ export function AppShell() {
     } catch (err) {
       bleRef.current = undefined;
       setBleSnapshot(undefined);
-      addLog("ERROR", err instanceof Error ? err.message : "Bluetooth connection failed.");
+      if (!isUserCancellation(err)) {
+        addLog("ERROR", err instanceof Error ? err.message : "Bluetooth connection failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -946,7 +991,18 @@ export function AppShell() {
         ? "Normal powered mode is ready for Bluetooth settings while USB can remain connected for power."
         : ""
       : "Use USB flash mode for flashing. Use normal powered mode for Bluetooth settings.";
-  const sidebarFirmwareVersion = bleSnapshot?.buildId ?? (target?.transport === "demo" ? "v2.23-demo" : undefined);
+  // What we show under the device name. Bluetooth gives us the IronOS build
+  // id; USB BLISP gives us the BL70x boot ROM version (IronOS isn't running
+  // in bootloader mode, so we can't read its version there). The sidebar uses
+  // the label to render the right prefix.
+  const sidebarVersionInfo: { label: "Firmware" | "Boot ROM"; value: string } | undefined =
+    bleSnapshot?.buildId
+      ? { label: "Firmware", value: bleSnapshot.buildId }
+      : target?.transport === "demo"
+        ? { label: "Firmware", value: "v2.23-demo" }
+        : target?.bootRomVersion
+          ? { label: "Boot ROM", value: target.bootRomVersion }
+          : undefined;
   const mobileModel = target?.model ?? (bluetoothConnected ? "v2" : undefined);
   const mobileTransport = usbConnected ? "USB" : bluetoothConnected ? "Bluetooth" : undefined;
   const mobileDisplayName = mobileModel && mobileTransport
@@ -976,7 +1032,7 @@ export function AppShell() {
         bluetoothLabel={bluetoothLabel}
         bluetoothDeviceName={bleSnapshot?.deviceName}
         busy={busy}
-        firmwareVersion={sidebarFirmwareVersion}
+        versionInfo={sidebarVersionInfo}
         modeAvailability={modeAvailability}
         modeHelp={modeHelp}
         mode={mode}

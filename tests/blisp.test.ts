@@ -50,7 +50,7 @@ describe("BLISP helpers", () => {
       value: { requestPort: vi.fn(async () => port) }
     });
 
-    await expect(new WebSerialBlispFlasher().connect()).rejects.toThrow(/closed|reading|BLISP/i);
+    await expect(new WebSerialBlispFlasher().connect()).rejects.toThrow(/closed|reading|BLISP|bootloader/i);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -92,7 +92,12 @@ describe("BLISP helpers", () => {
       label: "Pinecil V2 BL70x flash mode",
       portName: "USB 1a86:55d4"
     });
-    expect(writes[0]).toHaveLength(600);
-    expect(writes[1]).toEqual(encodeBlispCommand(0x10));
+    // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then 'U' burst
+    // (600 bytes). Then command 0x10 once OK is seen.
+    expect(writes[0]).toHaveLength(22);
+    expect(new TextDecoder().decode(writes[0])).toBe("BOUFFALOLAB5555RESET\0\0");
+    expect(writes[1]).toHaveLength(600);
+    expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
+    expect(writes[2]).toEqual(encodeBlispCommand(0x10));
   });
 });

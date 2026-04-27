@@ -36,6 +36,11 @@ export interface FlashTarget {
   portName?: string;
   serial?: string;
   bootloader?: string;
+  // Boot ROM version reported by the chip during connect, formatted as a
+  // dotted string (e.g. "1.0.0.0"). For Pinecil V2 this is the BL70x ROM
+  // version, not the IronOS firmware version — IronOS is not running while
+  // the chip is in bootloader mode.
+  bootRomVersion?: string;
   connectedAt: string;
 }
 
