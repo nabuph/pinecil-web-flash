@@ -522,14 +522,17 @@ a {
 }
 
 /* ── Activity Log ─────────────────────────────────────────────────────────── */
-.activity-panel {
+.activity-panel-outer {
   flex-shrink: 0;
+  padding: 0 24px 24px;
+}
+
+.activity-panel {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  width: calc(100% - 48px);
   max-width: 800px;
-  margin: 0 auto 24px;
+  margin: 0 auto;
   overflow: hidden;
 }
 
@@ -1994,7 +1997,6 @@ input[type="checkbox"] {
     width: 100%;
     height: auto;
     border-right: none;
-    border-bottom: 1px solid var(--border);
     overflow: visible;
     flex-direction: row;
     flex-wrap: wrap;
@@ -2029,18 +2031,17 @@ input[type="checkbox"] {
     position: sticky;
     top: 0;
     z-index: 6;
-    min-height: 54px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
     background: color-mix(in srgb, var(--bg) 94%, transparent);
     backdrop-filter: blur(10px);
   }
 
   .mobile-connection-copy {
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -2080,11 +2081,10 @@ input[type="checkbox"] {
   .main-content {
     overflow: visible;
     height: auto;
+    padding: 16px;
   }
 
-  .activity-panel {
-    position: static;
-  }
+  .activity-panel-outer { padding: 0 16px 16px; }
 
   .activity-expanded {
     grid-template-columns: 1fr;
@@ -2105,6 +2105,7 @@ input[type="checkbox"] {
 
 @media (max-width: 580px) {
   .main-content { padding: 16px; }
+  .activity-panel-outer { padding: 0 16px 16px; }
 
   /* Collapse the sidebar mode nav to icons-only on narrow screens so all
      four modes stay visible without overflow. */
@@ -2128,6 +2129,8 @@ input[type="checkbox"] {
     flex-direction: column;
     justify-content: center;
     gap: 8px;
+    min-height: 0;
+    padding: 10px 14px;
   }
 
   .mobile-device-name {

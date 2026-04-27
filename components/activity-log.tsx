@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, ChevronDown, Trash2, XCircle } from "lucide-react";
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import type { FlashPhase } from "@/lib/types";
 
 export type LogLine = { time: string; level: "INFO" | "WARN" | "ERROR" | "OK"; message: string };
@@ -43,6 +43,13 @@ export function ActivityLog({
   const isIndeterminate = indeterminatePhases.includes(phase);
   const fillPct = isIndeterminate ? 0 : progress;
   const activityState = phase === "done" ? "success" : phase === "fail" ? "fail" : "active";
+  const logListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open && logListRef.current) {
+      logListRef.current.scrollTop = logListRef.current.scrollHeight;
+    }
+  }, [logs, open]);
 
   return (
     <div className="activity-panel">
@@ -104,7 +111,7 @@ export function ActivityLog({
               <dd>{progressMessage}</dd>
             </div>
           </dl>
-          <div className="log-list" aria-live="polite">
+          <div className="log-list" aria-live="polite" ref={logListRef}>
             {logs.map((line, index) => (
               <p key={`${line.time}-${index}`}>
                 <span className="log-time">{line.time}</span>

@@ -132,7 +132,7 @@ function WorkspaceSplash({
               <p>
                 Use only the USB-C port, not the DC barrel jack. Hold [-] before plugging USB-C into the Pinecil,
                 keep holding for 10-15 seconds, then release. A black screen means flash mode is ready for
-                Firmware and Boot Logo.
+                firmware or boot logo updates.
               </p>
               <div className="device-splash-guide-actions">
                 {showConnectAction ? (
@@ -226,7 +226,7 @@ export function AppShell() {
   const logoBuildIdRef = useRef(0);
 
   const addLog = useCallback((level: LogLine["level"], message: string) => {
-    setLogs((current) => [{ time: nowStamp(), level, message }, ...current].slice(0, 90));
+    setLogs((current) => [...current, { time: nowStamp(), level, message }].slice(-90));
   }, []);
 
   // Forward BLISP-internal progress and soft errors (e.g. eflash_loader load
@@ -1031,7 +1031,15 @@ export function AppShell() {
   const mobileDisplayName = mobileModel && mobileTransport
     ? `Pinecil ${mobileModel.toUpperCase()} connected via ${mobileTransport}`
     : "No device connected";
-  const mobileModeLine = connected ? (target?.bootloader ? "Flash mode" : "Normal mode") : undefined;
+  const mobileModeLine = connected
+    ? [
+        sidebarFirmwareVersion ? `Firmware ${sidebarFirmwareVersion}` : undefined,
+        sidebarBootRomVersion ? `Boot ROM ${sidebarBootRomVersion}` : undefined,
+        target?.bootloader ? "Flash mode" : "Normal mode"
+      ]
+        .filter(Boolean)
+        .join(" / ")
+    : undefined;
 
   const usbConnectDisabled = busy || (browserCapable !== null && !browserSupport.webUsb && !browserSupport.webSerial);
   const bluetoothConnectDisabled = busy || (browserCapable !== null && !browserSupport.webBluetooth);
@@ -1193,17 +1201,19 @@ export function AppShell() {
 
         </div>
 
-        <ActivityLog
-          fileName={activeFileName}
-          logs={logs}
-          onClear={() => setLogs([])}
-          onOpenChange={setActivityOpen}
-          open={activityOpen}
-          phase={phase}
-          progress={progress}
-          progressMessage={progressMessage}
-          target={targetSummary}
-        />
+        <div className="activity-panel-outer">
+          <ActivityLog
+            fileName={activeFileName}
+            logs={logs}
+            onClear={() => setLogs([])}
+            onOpenChange={setActivityOpen}
+            open={activityOpen}
+            phase={phase}
+            progress={progress}
+            progressMessage={progressMessage}
+            target={targetSummary}
+          />
+        </div>
       </div>
     </div>
   );
