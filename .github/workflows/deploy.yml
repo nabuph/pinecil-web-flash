@@ -36,6 +36,12 @@ jobs:
           # Hide the demo (mock device) buttons on the live site.
           # Local `npm run dev` and `npm run build` keep them.
           NEXT_PUBLIC_DISABLE_DEMO: "true"
+          # Authenticate the IronOS release bundler against the GitHub API so
+          # we don't share the 60-req/hour unauthenticated limit with every
+          # other project on the runner. With the workflow's read-only
+          # permission on contents this token has no extra power; it just
+          # bumps the rate limit to 5,000 req/hour.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
