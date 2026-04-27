@@ -23,7 +23,10 @@ describe("BLISP helpers", () => {
       fileName: "Pinecilv2_EN.bin",
       bytes: new Uint8Array([1, 2, 3])
     };
-    expect(parseBlispFirmware(input)).toMatchObject({ address: 0x2000, needsBootHeader: true });
+    // V2 firmware binaries land at 0x2000; we deliberately do NOT regenerate
+    // the flash boot header at 0x0000 because the iron's existing one is
+    // already valid and writing a malformed header would brick it.
+    expect(parseBlispFirmware(input)).toMatchObject({ address: 0x2000, needsBootHeader: false });
   });
 
   it("builds a recognizable BL70x boot header shell", () => {

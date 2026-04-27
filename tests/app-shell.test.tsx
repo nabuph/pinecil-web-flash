@@ -25,7 +25,10 @@ describe("AppShell connection actions", () => {
     });
 
     expect(screen.getAllByText("Pinecil V2 connected via USB")).toHaveLength(2);
-    expect(screen.getAllByText("Flash mode")).toHaveLength(2);
+    // Sidebar shows "Flash mode" on its own line; mobile header collapses
+    // the meta into a single slash-separated string. Both should be present.
+    expect(screen.getByText("Flash mode")).toBeInTheDocument();
+    expect(screen.getAllByText(/Flash mode/).length).toBeGreaterThanOrEqual(2);
   });
 
   it("connects the Bluetooth demo target from the splash controls", async () => {

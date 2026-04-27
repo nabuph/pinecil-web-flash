@@ -84,10 +84,18 @@ export function parseBlispFirmware(input: FlashInput): { payload: Uint8Array; ad
     };
   }
 
+  // Match blisp CLI's behavior for plain .bin firmware: write only the
+  // firmware payload at 0x2000 and leave the existing flash boot header at
+  // 0x0000 untouched. blisp only writes 0x0000 when the source file format
+  // explicitly requires it (parsed_file.needs_boot_struct in tools/blisp);
+  // an IronOS Pinecilv2_*.bin doesn't, and the iron already has a valid
+  // boot header from its previous IronOS install pointing at 0x2000.
+  // Erasing+writing 0x0000 with an incorrect header would also brick the
+  // iron, so we explicitly opt out.
   return {
     payload: input.bytes,
     address: PINECIL_V2_FIRMWARE_OFFSET,
-    needsBootHeader: true
+    needsBootHeader: false
   };
 }
 
@@ -221,14 +229,20 @@ class SerialBlispSession {
     return out;
   }
 
-  async command(command: number, payload: Bytes = new Uint8Array(), checksum = false, expectPayload = false): Promise<Uint8Array> {
+  async command(
+    command: number,
+    payload: Bytes = new Uint8Array(),
+    checksum = false,
+    expectPayload = false,
+    responseTimeoutMs = 1200
+  ): Promise<Uint8Array> {
     await this.write(encodeBlispCommand(command, payload, checksum));
-    return this.receiveResponse(expectPayload);
+    return this.receiveResponse(expectPayload, responseTimeoutMs);
   }
 
-  async receiveResponse(expectPayload: boolean): Promise<Uint8Array> {
+  async receiveResponse(expectPayload: boolean, headTimeoutMs = 1200): Promise<Uint8Array> {
     for (;;) {
-      const head = await this.readExact(2, 1200);
+      const head = await this.readExact(2, headTimeoutMs);
       const code = new TextDecoder().decode(head) as BlispResponse | "FL";
       if (code === "PD") continue;
       if (code === "FL") {
@@ -351,7 +365,11 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     const baseProgress = firmware.needsBootHeader ? 176 : 0;
     await this.eraseAndWrite(firmware.address, firmware.payload, total, baseProgress, onProgress);
 
-    await this.session.command(0x3a, new Uint8Array(), true);
+    onProgress({ phase: "verify", message: "Running BLISP program check", current: total, total });
+    // Program check can run for several seconds because the chip recomputes
+    // a hash over everything we just wrote. Match the same generous timeout
+    // we use for erase rather than the default 1.2s.
+    await this.session.command(0x3a, new Uint8Array(), true, false, 15000);
     onProgress({ phase: "verify", message: "BLISP program check returned OK", current: total, total, level: "success" });
     await this.session.command(0x21, new Uint8Array(), true).catch(() => undefined);
     return { ok: true, message: "BLISP transfer completed.", verifySummary: "Program check returned OK." };
@@ -540,7 +558,24 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     onProgress: (event: FlashProgress) => void
   ) {
     if (!this.session) throw new Error("No BLISP serial session is connected.");
-    await this.session.command(0x30, concatBytes([le32(address), le32(address + bytes.length)]), true);
+    onProgress({
+      phase: "flash",
+      message: `Erasing flash 0x${address.toString(16).padStart(8, "0")} … 0x${(address + bytes.length).toString(16).padStart(8, "0")}`,
+      current: baseProgress,
+      total
+    });
+    // Sector erase across the whole IronOS firmware region can take many
+    // seconds — blisp's reference config sets erase_time_out=15000ms. The
+    // chip should send PD packets while it works (which receiveResponse
+    // loops over) but we widen the per-read timeout in case it goes silent
+    // for a while between PDs.
+    await this.session.command(
+      0x30,
+      concatBytes([le32(address), le32(address + bytes.length)]),
+      true,
+      false,
+      15000
+    );
     const chunkSize = flashWriteChunkSize();
     let sent = 0;
     for (let offset = 0; offset < bytes.length; offset += chunkSize) {
