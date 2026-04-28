@@ -225,6 +225,8 @@ export function AppShell() {
   const backendRef = useRef<FlasherBackend | undefined>(undefined);
   const bleRef = useRef<PinecilBleClient | undefined>(undefined);
   const logoBuildIdRef = useRef(0);
+  const preserveDoneOnDisconnectRef = useRef(false);
+  const skipNextSelectionResetRef = useRef(false);
 
   const addLog = useCallback((level: LogLine["level"], message: string) => {
     setLogs((current) => [...current, { time: nowStamp(), level, message }].slice(-90));
@@ -427,6 +429,10 @@ export function AppShell() {
 
   // Reset prepared state when selection changes
   useEffect(() => {
+    if (skipNextSelectionResetRef.current) {
+      skipNextSelectionResetRef.current = false;
+      return;
+    }
     const bluetoothActive = Boolean(bleRef.current) || bleDemo;
     setPreparedFile(undefined);
     setProgress(0);
@@ -436,7 +442,7 @@ export function AppShell() {
         ? "Ready to flash. Validation will run automatically."
         : bluetoothActive ? "Bluetooth telemetry and settings are ready." : "Waiting for device access."
     );
-  }, [bleDemo, language, mode, selectedReleaseTag, target]);
+  }, [bleDemo, language, mode, selectedReleaseTag, target?.connectedAt]);
 
   const clearBluetoothState = useCallback(() => {
     try { bleRef.current?.disconnect(); } catch (err) {
@@ -561,7 +567,16 @@ export function AppShell() {
 
   // Keep the ref pointed at the current disconnectTarget for the static
   // SerialPort 'disconnect' event handler to invoke on physical unplug.
-  disconnectListenerRef.current = disconnectTarget;
+  disconnectListenerRef.current = () => {
+    if (preserveDoneOnDisconnectRef.current) {
+      preserveDoneOnDisconnectRef.current = false;
+      skipNextSelectionResetRef.current = true;
+      clearUsbState();
+      addLog("INFO", "Device reset after flashing.");
+      return;
+    }
+    void disconnectTarget();
+  };
 
   const prepareFirmwareForTarget = useCallback(async () => {
     if (!target || !activeModel) throw new Error("Connect a Pinecil before flashing firmware.");
@@ -606,14 +621,26 @@ export function AppShell() {
       const prepared = kind === "firmware" ? await prepareFirmwareForTarget() : await prepareLogoForTarget();
       setPreparedFile(prepared);
       addLog("OK", `${prepared.fileName} validated (${formatBytes(prepared.bytes.length)}, SHA-256 ${prepared.sha256?.slice(0, 16)}...).`);
+      preserveDoneOnDisconnectRef.current = true;
       const result = await flashPrepared(target, backendRef.current, prepared, setProgressFromEvent);
       if (!result.ok) throw new Error(result.message);
+      if (result.installedFirmwareVersion) {
+        setTarget((current) => (
+          current
+            ? { ...current, installedFirmwareVersion: result.installedFirmwareVersion }
+            : current
+        ));
+      }
       setPhase("done");
       setProgress(100);
       setProgressMessage(result.verifySummary ?? result.message);
       addLog("OK", result.message);
+      window.setTimeout(() => {
+        preserveDoneOnDisconnectRef.current = false;
+      }, 5000);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Flash failed.";
+      preserveDoneOnDisconnectRef.current = false;
       setPhase("fail");
       setProgress(100);
       setProgressMessage(message);
@@ -747,6 +774,9 @@ export function AppShell() {
 
   const connectUsbOnly = useCallback(async () => {
     setBusy(true);
+    setPhase("connect");
+    setProgress(0);
+    setProgressMessage("Waiting for USB device selection.");
     try {
       await connectUsb();
     } catch (err) {
@@ -965,7 +995,9 @@ export function AppShell() {
     : "No Pinecil connected";
   const usbConnected = Boolean(target);
   const bluetoothConnected = Boolean(bleSnapshot);
-  const activityPulse = busy || bleTelemetryPolling;
+  const usbConnectBusy = busy && phase === "connect";
+  const bluetoothBusy = busy && (mode === "ble" || mode === "ble-settings");
+  const activityPulse = usbConnectBusy || bluetoothBusy || bleTelemetryPolling;
   const connected = usbConnected || bluetoothConnected;
   const connectionKind = usbConnected ? "usb" : bluetoothConnected ? "bluetooth" : undefined;
   const v1Connected = connectionKind === "usb" && target?.model === "v1";

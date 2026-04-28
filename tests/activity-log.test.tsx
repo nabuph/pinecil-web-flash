@@ -53,14 +53,36 @@ describe("ActivityLog", () => {
     expect(container.querySelector(".activity-progress-fill")).toHaveAttribute("data-state", "fail");
   });
 
-  it("pulses the progress track during long-running flash work", () => {
+  it("does not pulse the progress track during flash writes", () => {
     const { container } = renderActivity("flash");
+
+    expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "false");
+  });
+
+  it("does not pulse while idly waiting on page load", () => {
+    const { container } = renderActivity("connect");
+
+    expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "false");
+  });
+
+  it("can pulse the connect phase after the user starts connecting", () => {
+    const { container } = render(<ActivityHarness phase="connect" pulse />);
+
+    expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
+  });
+
+  it("pulses the progress track while preparing", () => {
+    const { container, rerender } = renderActivity("connect");
+
+    expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "false");
+
+    rerender(<ActivityHarness phase="validate" />);
 
     expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
   });
 
   it("can pulse the progress track for Bluetooth activity outside flash phases", () => {
-    const { container } = render(<ActivityHarness phase="detect" pulse />);
+    const { container } = render(<ActivityHarness phase="select" pulse />);
 
     expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
   });

@@ -70,6 +70,7 @@ export interface FlashProgress {
 export interface FlashResult {
   ok: boolean;
   message: string;
+  installedFirmwareVersion?: string;
   verifySummary?: string;
 }
 

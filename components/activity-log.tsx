@@ -18,6 +18,7 @@ const phaseLabels: Record<FlashPhase, string> = {
 };
 
 const indeterminatePhases: FlashPhase[] = ["validate", "detect"];
+const pulsingPhases: FlashPhase[] = ["detect", "validate"];
 
 export function ActivityLog({
   fileName,
@@ -45,7 +46,7 @@ export function ActivityLog({
   const isIndeterminate = indeterminatePhases.includes(phase);
   const fillPct = isIndeterminate ? 0 : progress;
   const activityState = phase === "done" ? "success" : phase === "fail" ? "fail" : "active";
-  const isLongRunning = activityState === "active" && (pulse || phase === "flash" || phase === "verify");
+  const isLongRunning = activityState === "active" && (pulsingPhases.includes(phase) || Boolean(pulse));
   const logListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
