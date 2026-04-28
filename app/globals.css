@@ -1216,15 +1216,17 @@ input[type="checkbox"] {
   display: block;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--fg);
   margin-bottom: 4px;
 }
 
 .browser-notice-body p {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--fg-muted);
-  line-height: 1.6;
+  line-height: 1.5;
   margin: 0;
+  max-width: 62ch;
 }
 
 .browser-notice-body a {
