@@ -11,14 +11,14 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = "Ralim/IronOS";
 // Bundle the latest few stable releases so users can roll back without a
 // rebuild, plus the latest prerelease for adventurous testers.
 const STABLE_COUNT = 3;
 const PRERELEASE_COUNT = 1;
-const PER_PAGE = 30;
+const PER_PAGE = 100;
 const ASSET_NAMES = new Set(["Pinecil.zip", "Pinecilv2.zip", "metadata.zip"]);
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,21 +27,28 @@ const publicDir = join(repoRoot, "public");
 const firmwareDir = join(publicDir, "firmware");
 const catalogPath = join(publicDir, "releases.json");
 
-if (process.env.BUNDLE_RELEASES === "skip") {
-  console.log("[bundle-releases] BUNDLE_RELEASES=skip — leaving public/firmware untouched.");
-  process.exit(0);
-}
-
-async function gh(path) {
+export async function gh(path, { useToken = true } = {}) {
   const res = await fetch(`https://api.github.com${path}`, {
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "pinecil-web-flasher-bundler",
-      ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
+      ...(useToken && process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
     }
   });
   if (!res.ok) throw new Error(`GitHub API ${path} returned ${res.status} ${res.statusText}`);
   return res.json();
+}
+
+export async function fetchReleasePages({ useToken }) {
+  const releases = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const batch = await gh(`/repos/${REPO}/releases?per_page=${PER_PAGE}&page=${page}`, { useToken });
+    if (!Array.isArray(batch)) throw new Error("GitHub releases API returned an unexpected response.");
+    releases.push(...batch);
+    if (batch.length < PER_PAGE) break;
+    if (pickReleases(releases).length >= STABLE_COUNT + PRERELEASE_COUNT) break;
+  }
+  return releases;
 }
 
 async function downloadTo(url, destination) {
@@ -53,16 +60,31 @@ async function downloadTo(url, destination) {
   return buffer.length;
 }
 
-function pickReleases(releases) {
+export function pickReleases(releases) {
   const stable = releases.filter((r) => !r.prerelease && !r.draft).slice(0, STABLE_COUNT);
   const prerelease = releases.filter((r) => r.prerelease && !r.draft).slice(0, PRERELEASE_COUNT);
   return [...stable, ...prerelease];
 }
 
+export async function loadSelectableReleases({ logger = console } = {}) {
+  let all = await fetchReleasePages({ useToken: true });
+  let picked = pickReleases(all);
+  if (!picked.length && process.env.GITHUB_TOKEN) {
+    logger.warn("[bundle-releases] Authenticated release lookup found no selectable public releases; retrying without GITHUB_TOKEN.");
+    all = await fetchReleasePages({ useToken: false });
+    picked = pickReleases(all);
+  }
+  return picked;
+}
+
 async function main() {
+  if (process.env.BUNDLE_RELEASES === "skip") {
+    console.log("[bundle-releases] BUNDLE_RELEASES=skip — leaving public/firmware untouched.");
+    return;
+  }
+
   console.log(`[bundle-releases] Fetching ${REPO} releases…`);
-  const all = await gh(`/repos/${REPO}/releases?per_page=${PER_PAGE}`);
-  const picked = pickReleases(all);
+  const picked = await loadSelectableReleases();
   if (!picked.length) throw new Error("No releases matched the stable/prerelease filter.");
 
   if (existsSync(firmwareDir)) await rm(firmwareDir, { recursive: true, force: true });
@@ -109,7 +131,9 @@ async function main() {
   console.log(`[bundle-releases] Wrote ${catalog.length} releases to ${catalogPath}.`);
 }
 
-main().catch((err) => {
-  console.error("[bundle-releases] Failed:", err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("[bundle-releases] Failed:", err);
+    process.exit(1);
+  });
+}

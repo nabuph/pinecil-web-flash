@@ -33,7 +33,7 @@ import { LogoStudio } from "@/components/logo-studio";
 import { BlePanel, BleSettingsPanel } from "@/components/ble-panel";
 
 const initialLogs: LogLine[] = [
-  { time: "--:--:--", level: "INFO", message: "Pinecil Web Flash loaded." },
+  { time: "--:--:--", level: "INFO", message: "Pinecil Web Flash loaded (BLISP sync build)." },
   { time: "--:--:--", level: "WARN", message: "Use a Chromium desktop browser for WebUSB, Web Serial, and Web Bluetooth." }
 ];
 
@@ -210,6 +210,7 @@ export function AppShell() {
   const [generatedLogo, setGeneratedLogo] = useState<GeneratedLogo>();
   const [bleSnapshot, setBleSnapshot] = useState<BleSnapshot>();
   const [bleDemo, setBleDemo] = useState(false);
+  const [bleTelemetryPolling, setBleTelemetryPolling] = useState(false);
   const [bleTelemetryHistory, setBleTelemetryHistory] = useState<BleTelemetrySample[]>([]);
   const [bleDrafts, setBleDrafts] = useState<BleSettingDraft[]>(() =>
     makeBleDrafts({ deviceName: "Pinecil V2", readOnly: false, telemetry: {}, settings: KNOWN_BLE_SETTINGS })
@@ -444,6 +445,7 @@ export function AppShell() {
     bleRef.current = undefined;
     setBleSnapshot(undefined);
     setBleDemo(false);
+    setBleTelemetryPolling(false);
     setBleTelemetryHistory([]);
     setBleDrafts(makeBleDrafts({ deviceName: "Pinecil V2", readOnly: false, telemetry: {}, settings: KNOWN_BLE_SETTINGS }));
   }, [addLog]);
@@ -758,6 +760,9 @@ export function AppShell() {
 
   const connectBluetoothOnly = useCallback(async () => {
     setBusy(true);
+    setPhase("detect");
+    setProgress(0);
+    setProgressMessage("Connecting over Bluetooth.");
     try {
       await connectBluetooth();
     } catch (err) {
@@ -816,6 +821,7 @@ export function AppShell() {
     const timer = window.setInterval(() => {
       if (polling || !bleRef.current) return;
       polling = true;
+      setBleTelemetryPolling(true);
       bleRef.current
         .readLiveTelemetry()
         .then((telemetry) => {
@@ -828,10 +834,14 @@ export function AppShell() {
         })
         .finally(() => {
           polling = false;
+          setBleTelemetryPolling(false);
         });
     }, 1000);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      setBleTelemetryPolling(false);
+    };
   }, [addLog, appendBleTelemetry, bleDemo, blePollingActive]);
 
   const updateBleDraft = useCallback((setting: BleSettingDraft, value: number) => {
@@ -955,6 +965,7 @@ export function AppShell() {
     : "No Pinecil connected";
   const usbConnected = Boolean(target);
   const bluetoothConnected = Boolean(bleSnapshot);
+  const activityPulse = busy || bleTelemetryPolling;
   const connected = usbConnected || bluetoothConnected;
   const connectionKind = usbConnected ? "usb" : bluetoothConnected ? "bluetooth" : undefined;
   const v1Connected = connectionKind === "usb" && target?.model === "v1";
@@ -1209,6 +1220,7 @@ export function AppShell() {
             onOpenChange={setActivityOpen}
             open={activityOpen}
             phase={phase}
+            pulse={activityPulse}
             progress={progress}
             progressMessage={progressMessage}
             target={targetSummary}

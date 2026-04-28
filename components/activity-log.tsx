@@ -26,6 +26,7 @@ export function ActivityLog({
   onOpenChange,
   open,
   phase,
+  pulse,
   progress,
   progressMessage,
   target
@@ -36,6 +37,7 @@ export function ActivityLog({
   onOpenChange(open: boolean): void;
   open: boolean;
   phase: FlashPhase;
+  pulse?: boolean;
   progress: number;
   progressMessage: string;
   target: string;
@@ -43,6 +45,7 @@ export function ActivityLog({
   const isIndeterminate = indeterminatePhases.includes(phase);
   const fillPct = isIndeterminate ? 0 : progress;
   const activityState = phase === "done" ? "success" : phase === "fail" ? "fail" : "active";
+  const isLongRunning = activityState === "active" && (pulse || phase === "flash" || phase === "verify");
   const logListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,7 +64,7 @@ export function ActivityLog({
           </span>
 
           <div className="activity-progress-wrap">
-            <div className="activity-progress-track">
+            <div className="activity-progress-track" data-pulse={isLongRunning ? "true" : "false"}>
               <div
                 className="activity-progress-fill"
                 data-indeterminate={isIndeterminate ? "true" : "false"}

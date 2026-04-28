@@ -604,13 +604,30 @@ a {
   border-radius: var(--r-full);
   background: var(--border-raised);
   overflow: hidden;
+  position: relative;
 }
 
 .activity-progress-fill {
+  position: relative;
+  z-index: 1;
   height: 100%;
   border-radius: var(--r-full);
   background: var(--accent);
   transition: width 200ms var(--ease);
+}
+
+.activity-progress-track[data-pulse="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 45%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: activity-track-pulse 1.2s var(--ease) infinite;
+}
+
+.activity-progress-track[data-pulse="true"] .activity-progress-fill[data-state="active"] {
+  animation: activity-fill-pulse 1.2s var(--ease) infinite;
 }
 
 .activity-progress-fill[data-state="success"] {
@@ -629,6 +646,16 @@ a {
 @keyframes indeterminate {
   0%   { transform: translateX(-120%); }
   100% { transform: translateX(420%); }
+}
+
+@keyframes activity-track-pulse {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes activity-fill-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
 
 .activity-progress-label {
@@ -1912,6 +1939,10 @@ input[type="checkbox"] {
   .activity-progress-fill[data-indeterminate="true"] {
     animation: none;
     width: 40% !important;
+  }
+  .activity-progress-track[data-pulse="true"]::after,
+  .activity-progress-track[data-pulse="true"] .activity-progress-fill[data-state="active"] {
+    animation: none;
   }
 }
 

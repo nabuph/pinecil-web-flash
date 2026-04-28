@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   BL70X_TCM_ADDRESS,
+  buildBl70xFlashSetPayload,
   buildRamLoadBootHeader,
   buildRamSegmentHeader,
   crc32,
   findIronOsVersion,
   findIronOsVersionInFlash,
   flashRead,
-  loadEflashLoader
+  flashWriteChunkSize,
+  loadEflashLoader,
+  patchBl70xEflashLoader,
+  segmentChunkSize
 } from "@/lib/protocol/blisp-eflash";
 
 describe("blisp-eflash CRC32", () => {
@@ -60,6 +64,34 @@ describe("buildRamSegmentHeader", () => {
     // CRC must match crc32 over the first 12 bytes (zero-padded same buffer).
     const headBytes = header.slice(0, 12);
     expect(dv.getUint32(12, true)).toBe(crc32(headBytes));
+  });
+});
+
+describe("buildBl70xFlashSetPayload", () => {
+  it("matches Bouffalo BL702/BL706 eflash_loader flash config defaults", () => {
+    const payload = buildBl70xFlashSetPayload();
+    const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    expect(dv.getUint32(0, true)).toBe(0x000102ff);
+  });
+});
+
+describe("patchBl70xEflashLoader", () => {
+  it("mirrors blisp's BL70x loader clock-byte patch", () => {
+    const bytes = new Uint8Array(0xe1);
+    patchBl70xEflashLoader(bytes);
+    expect(bytes[0xe0]).toBe(1);
+  });
+});
+
+describe("flashWriteChunkSize", () => {
+  it("matches native blisp's macOS flash-write chunk", () => {
+    expect(flashWriteChunkSize()).toBe(372);
+  });
+});
+
+describe("segmentChunkSize", () => {
+  it("matches native blisp's macOS RAM-load chunk", () => {
+    expect(segmentChunkSize()).toBe(252 * 16);
   });
 });
 

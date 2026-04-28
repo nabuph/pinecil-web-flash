@@ -28,30 +28,40 @@ import type { FlashProgress } from "@/lib/types";
 
 // Where the eflash_loader expects to live in TCM RAM on BL70x.
 export const BL70X_TCM_ADDRESS = 0x22010000;
-// blisp's blisp_easy_load_segment_data uses smaller chunks on macOS because
-// the kernel CDC driver discards larger USB bulk transfers. Match that here
-// so we don't have to special-case the platform.
-const SEGMENT_CHUNK_SIZE_MAC = 252 * 16;
-const SEGMENT_CHUNK_SIZE_OTHER = 4092;
-// blisp_easy_flash_write tightens further for flash-write traffic on macOS.
-const FLASH_WRITE_CHUNK_MAC = 372;
-const FLASH_WRITE_CHUNK_OTHER = 2052;
+// Match native blisp's macOS RAM-load chunk. With Web Serial we wait on
+// WritableStream backpressure in blisp.ts and pace between chunks; using many
+// smaller cmd 0x18 chunks increases the number of non-retryable ACKs.
+const SEGMENT_CHUNK_SIZE_BROWSER = 252 * 16;
+const LOAD_COMMAND_TIMEOUT_MS = 10000;
+const LOAD_SEGMENT_LATE_OK_TIMEOUT_MS = 5000;
+const LOAD_SEGMENT_PACE_MS = 50;
+const LOAD_SEGMENT_PROGRESS_INTERVAL_BYTES = 8 * 1024;
+// Match native blisp's macOS flash-write ceiling. Browser writes are paced in
+// blisp.ts so we keep the command count closer to the known-good CLI path.
+const FLASH_WRITE_CHUNK_BROWSER = 372;
+const BL70X_EFLASH_LOADER_CLOCK_OFFSET = 0xe0;
+const BL70X_EFLASH_LOADER_32MHZ_CLOCK = 1;
 
-function isAppleHost(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  // Apple Silicon and Intel Macs report "Macintosh" or "Mac OS X". iPad
-  // pretends to be a desktop Mac too but Web Serial isn't available on iPad
-  // anyway, so this is fine.
-  return /Macintosh|Mac OS X/i.test(ua);
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function segmentChunkSize(): number {
-  return isAppleHost() ? SEGMENT_CHUNK_SIZE_MAC : SEGMENT_CHUNK_SIZE_OTHER;
+  return SEGMENT_CHUNK_SIZE_BROWSER;
 }
 
 export function flashWriteChunkSize(): number {
-  return isAppleHost() ? FLASH_WRITE_CHUNK_MAC : FLASH_WRITE_CHUNK_OTHER;
+  return FLASH_WRITE_CHUNK_BROWSER;
+}
+
+export function patchBl70xEflashLoader(bytes: Uint8Array): Uint8Array {
+  if (bytes.length > BL70X_EFLASH_LOADER_CLOCK_OFFSET) {
+    // Native blisp patches bl70x_eflash_loader_bin[0xE0] = 1 before loading
+    // it. The bundled asset already has this byte set, but keep the patch here
+    // so a refreshed loader blob still matches blisp's runtime behavior.
+    bytes[BL70X_EFLASH_LOADER_CLOCK_OFFSET] = BL70X_EFLASH_LOADER_32MHZ_CLOCK;
+  }
+  return bytes;
 }
 
 // Standard CRC-32 (IEEE 802.3) with reflected input/output and final XOR.
@@ -230,9 +240,33 @@ export interface BlispCommandSession {
     command: number,
     payload?: Uint8Array,
     addChecksum?: boolean,
-    expectPayload?: boolean
+    expectPayload?: boolean,
+    responseTimeoutMs?: number
   ): Promise<Uint8Array>;
+  receiveResponse?(expectPayload: boolean, headTimeoutMs?: number): Promise<Uint8Array>;
   write(bytes: Uint8Array): Promise<void>;
+}
+
+export function buildBl70xFlashSetPayload(): Uint8Array {
+  const payload = new Uint8Array(4);
+  // Bouffalo BL702/BL706 eflash_loader_cfg.conf default:
+  // flash_pin=0xff (use efuse/default), flash_clock_cfg=2 (24 MHz),
+  // flash_io_mode=1 (dual output), flash_clock_delay=0.
+  writeU32LE(payload, 0, 0x000102ff);
+  return payload;
+}
+
+export async function loadBl70xFlashParameters(
+  session: BlispCommandSession,
+  onProgress?: (event: FlashProgress) => void
+): Promise<void> {
+  onProgress?.({
+    phase: "detect",
+    message: "Configuring BL70x flash parameters",
+    current: 1,
+    total: 1
+  });
+  await session.command(0x3b, buildBl70xFlashSetPayload(), true, false);
 }
 
 // Loads `eflashLoaderBytes` (the BL70x eflash_loader.bin) into TCM RAM and
@@ -251,7 +285,12 @@ export async function loadEflashLoader(
     current: 0,
     total: eflashLoaderBytes.length
   });
-  await session.command(0x11, buildRamLoadBootHeader(), false, false);
+  try {
+    await session.command(0x11, buildRamLoadBootHeader(), false, false, LOAD_COMMAND_TIMEOUT_MS);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`BLISP load_boot_header failed for eflash_loader: ${message}`);
+  }
 
   // 2. Send the segment header (cmd 0x17). 16 bytes. No checksum.
   onProgress?.({
@@ -260,25 +299,72 @@ export async function loadEflashLoader(
     current: 0,
     total: eflashLoaderBytes.length
   });
-  await session.command(
-    0x17,
-    buildRamSegmentHeader(BL70X_TCM_ADDRESS, eflashLoaderBytes.length),
-    false,
-    true
-  );
+  try {
+    await session.command(
+      0x17,
+      buildRamSegmentHeader(BL70X_TCM_ADDRESS, eflashLoaderBytes.length),
+      false,
+      true,
+      LOAD_COMMAND_TIMEOUT_MS
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`BLISP load_segment_header failed for eflash_loader: ${message}`);
+  }
 
   // 3. Stream the eflash_loader bytes via cmd 0x18. Chunks must respect the
   // host platform's USB CDC limits.
   const chunkSize = segmentChunkSize();
+  let lastReported = 0;
   for (let offset = 0; offset < eflashLoaderBytes.length; offset += chunkSize) {
     const chunk = eflashLoaderBytes.slice(offset, offset + chunkSize);
-    await session.command(0x18, chunk, false, false);
-    onProgress?.({
-      phase: "detect",
-      message: `Loading eflash_loader (${offset + chunk.length} of ${eflashLoaderBytes.length} bytes)`,
-      current: offset + chunk.length,
-      total: eflashLoaderBytes.length
-    });
+    try {
+      await session.command(0x18, chunk, false, false, LOAD_COMMAND_TIMEOUT_MS);
+    } catch (err) {
+      if (
+        session.receiveResponse &&
+        err instanceof Error &&
+        /Timed out reading from BLISP/.test(err.message)
+      ) {
+        try {
+          await session.receiveResponse(false, LOAD_SEGMENT_LATE_OK_TIMEOUT_MS);
+          onProgress?.({
+            phase: "detect",
+            message: `eflash_loader chunk ACK arrived late at ${offset.toLocaleString()} bytes`,
+            current: offset,
+            total: eflashLoaderBytes.length,
+            level: "warn"
+          });
+        } catch {
+          const message = err.message;
+          throw new Error(
+            `BLISP load_segment_data failed for eflash_loader at ${offset.toLocaleString()} of ` +
+              `${eflashLoaderBytes.length.toLocaleString()} bytes (chunk ${chunk.length}, timeout ${LOAD_COMMAND_TIMEOUT_MS}+${LOAD_SEGMENT_LATE_OK_TIMEOUT_MS} ms): ${message}`
+          );
+        }
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `BLISP load_segment_data failed for eflash_loader at ${offset.toLocaleString()} of ` +
+            `${eflashLoaderBytes.length.toLocaleString()} bytes (chunk ${chunk.length}, timeout ${LOAD_COMMAND_TIMEOUT_MS} ms): ${message}`
+        );
+      }
+    }
+    const loaded = offset + chunk.length;
+    const shouldReport =
+      loaded === eflashLoaderBytes.length ||
+      lastReported === 0 ||
+      loaded - lastReported >= LOAD_SEGMENT_PROGRESS_INTERVAL_BYTES;
+    if (shouldReport) {
+      lastReported = loaded;
+      onProgress?.({
+        phase: "detect",
+        message: `Loading eflash_loader (${loaded} of ${eflashLoaderBytes.length} bytes)`,
+        current: loaded,
+        total: eflashLoaderBytes.length
+      });
+    }
+    await delay(LOAD_SEGMENT_PACE_MS);
   }
 
   // 4. check_image (cmd 0x19) — chip verifies what we just sent.
@@ -288,7 +374,12 @@ export async function loadEflashLoader(
     current: eflashLoaderBytes.length,
     total: eflashLoaderBytes.length
   });
-  await session.command(0x19, new Uint8Array(), false, false);
+  try {
+    await session.command(0x19, new Uint8Array(), false, false, LOAD_COMMAND_TIMEOUT_MS);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`BLISP check_image failed for eflash_loader: ${message}`);
+  }
 
   // 5. BL70x ERRATA — instead of run_image (cmd 0x1A) the chip needs three
   // write_memory (cmd 0x50) pokes to actually start the loaded RAM app.

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildPinecilV2BootHeader, encodeBlispCommand, parseBlispFirmware, WebSerialBlispFlasher } from "@/lib/protocol/blisp";
+import {
+  buildPinecilV2BootHeader,
+  BL70X_HANDSHAKE_BURST_BYTES,
+  encodeBlispCommand,
+  eraseResponseTimeoutMs,
+  parseBlispFirmware,
+  WebSerialBlispFlasher
+} from "@/lib/protocol/blisp";
 import type { FlashInput } from "@/lib/types";
 
 describe("BLISP helpers", () => {
@@ -16,23 +23,37 @@ describe("BLISP helpers", () => {
     expect([...encoded]).toEqual([0x31, 0x09, 0x03, 0x00, 1, 2, 3]);
   });
 
-  it("normalizes Pinecil V2 firmware binaries to flash offset", () => {
+  it("normalizes Pinecil V2 firmware binaries to flash offset without rewriting the boot header", () => {
     const input: FlashInput = {
       model: "v2",
       kind: "firmware",
       fileName: "Pinecilv2_EN.bin",
       bytes: new Uint8Array([1, 2, 3])
     };
-    // V2 firmware binaries land at 0x2000; we deliberately do NOT regenerate
-    // the flash boot header at 0x0000 because the iron's existing one is
-    // already valid and writing a malformed header would brick it.
+    // Native blisp identifies a Pinecil V2 .bin as needing a boot struct, but
+    // the browser path leaves the installed boot header at 0x0000 untouched.
     expect(parseBlispFirmware(input)).toMatchObject({ address: 0x2000, needsBootHeader: false });
   });
 
-  it("builds a recognizable BL70x boot header shell", () => {
+  it("builds the BLISP BL70x boot header template", () => {
     const header = buildPinecilV2BootHeader();
     expect(new TextDecoder().decode(header.slice(0, 4))).toBe("BFNP");
+    expect(new TextDecoder().decode(header.slice(8, 12))).toBe("FCFG");
     expect(header).toHaveLength(176);
+    expect([...header.slice(100, 104)]).toEqual([0x00, 0x00, 0x00, 0x00]);
+    expect([...header.slice(128, 132)]).toEqual([0x00, 0x20, 0x00, 0x00]);
+    expect([...header.slice(132, 136)]).toEqual([0xef, 0xbe, 0xad, 0xde]);
+    expect([...header.slice(164, 168)]).toEqual([0x00, 0x10, 0x00, 0x00]);
+    expect([...header.slice(168, 172)]).toEqual([0x00, 0x20, 0x00, 0x00]);
+    expect([...header.slice(172, 176)]).toEqual([0xef, 0xbe, 0xad, 0xde]);
+  });
+
+  it("allows full firmware erases to run well past the nominal BLISP sector timing", () => {
+    // BLISP's BL70x flash config says 4K sectors erase in 300ms nominally.
+    // The 184 KiB IronOS image is close enough to 15s that real hardware can
+    // exceed it, so the browser path uses a scaled timeout with headroom.
+    expect(eraseResponseTimeoutMs(184.2 * 1024)).toBeGreaterThan(45000);
+    expect(eraseResponseTimeoutMs(4 * 1024)).toBe(30000);
   });
 
   it("rejects serial ports that do not answer the BLISP handshake", async () => {
@@ -99,11 +120,11 @@ describe("BLISP helpers", () => {
       label: "Pinecil V2 BL70x flash mode",
       portName: "USB 1a86:55d4"
     });
-    // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then 'U' burst
-    // (600 bytes). Then command 0x10 once OK is seen.
+    // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then blisp's
+    // baud-derived 'U' burst. Then command 0x10 once OK is seen.
     expect(writes[0]).toHaveLength(22);
     expect(new TextDecoder().decode(writes[0])).toBe("BOUFFALOLAB5555RESET\0\0");
-    expect(writes[1]).toHaveLength(600);
+    expect(writes[1]).toHaveLength(BL70X_HANDSHAKE_BURST_BYTES);
     expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
     expect(writes[2]).toEqual(encodeBlispCommand(0x10));
   });
