@@ -108,6 +108,9 @@ html, body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -484,8 +487,17 @@ a {
   flex: 1;
   overflow-y: auto;
   padding: 24px;
+  scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
   scrollbar-color: var(--border-raised) transparent;
+}
+
+@supports (overflow-y: overlay) {
+  html,
+  body,
+  .main-content {
+    overflow-y: overlay;
+  }
 }
 
 /* ── Section / Panel ─────────────────────────────────────────────────────── */
@@ -2001,9 +2013,12 @@ input[type="checkbox"] {
 @media (max-width: 880px) {
   .app-layout {
     flex-direction: column;
+    width: 100%;
+    max-width: none;
     height: auto;
     min-height: 100vh;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .sidebar {
@@ -2121,7 +2136,7 @@ input[type="checkbox"] {
     flex: 1;
     min-width: 0;
     justify-content: center;
-    padding: 10px 6px;
+    padding: 0 6px;
     gap: 0;
   }
   .sidebar-nav-label {
@@ -2141,7 +2156,7 @@ input[type="checkbox"] {
     white-space: normal;
     overflow: visible;
     text-overflow: clip;
-    line-height: 1.3;
+    line-height: 1.5;
   }
 
   .mobile-connection-actions {
@@ -2170,8 +2185,6 @@ input[type="checkbox"] {
   .device-splash-guide-actions .btn {
     width: 100%;
   }
-
-  .panel-section { gap: 14px; }
 
   .form-grid,
   .firmware-grid,
