@@ -1123,7 +1123,7 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
-.device-splash-guide {
+.splash-card {
   display: flex;
   flex-direction: column;
   padding: 14px;
@@ -1132,20 +1132,20 @@ input[type="checkbox"] {
   background: var(--bg);
 }
 
-.device-splash-guide-body {
+.splash-card-body {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
 }
 
-.device-splash-guide h3 {
+.splash-card h3 {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0;
 }
 
-.device-splash-guide p {
+.splash-card p {
   margin-top: 5px;
   font-size: 12px;
   line-height: 1.55;
@@ -1194,13 +1194,11 @@ input[type="checkbox"] {
 
 /* ── Browser notice ──────────────────────────────────────────────────────── */
 .browser-notice {
-  display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 16px 20px;
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
-  border-radius: var(--r-lg);
+  flex-direction: row;
+  gap: 10px;
   background: var(--warning-dim);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
   margin: 0 auto 20px;
   max-width: 800px;
   width: 100%;
@@ -1212,21 +1210,8 @@ input[type="checkbox"] {
   margin-top: 1px;
 }
 
-.browser-notice-body strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
+.browser-notice h3 {
   color: var(--fg);
-  margin-bottom: 4px;
-}
-
-.browser-notice-body p {
-  font-size: 13px;
-  color: var(--fg-muted);
-  line-height: 1.5;
-  margin: 0;
-  max-width: 62ch;
 }
 
 .browser-notice-body a {

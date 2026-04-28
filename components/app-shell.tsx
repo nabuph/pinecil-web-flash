@@ -126,8 +126,8 @@ function WorkspaceSplash({
       </div>
       <div className="device-splash-guides">
         {showUsbActions ? (
-          <section className="device-splash-guide">
-            <div className="device-splash-guide-body">
+          <section className="device-splash-guide splash-card">
+            <div className="device-splash-guide-body splash-card-body">
               <h3>USB flashing</h3>
               <p>
                 Use only the USB-C port, not the DC barrel jack. Hold [-] before plugging USB-C into the Pinecil,
@@ -151,8 +151,8 @@ function WorkspaceSplash({
           </section>
         ) : null}
         {showBluetoothActions ? (
-          <section className="device-splash-guide">
-            <div className="device-splash-guide-body">
+          <section className="device-splash-guide splash-card">
+            <div className="device-splash-guide-body splash-card-body">
               <h3>Bluetooth telemetry and settings</h3>
               <p>
                 Bluetooth needs a Pinecil V2 on IronOS 2.21 or newer, powered normally instead of flash mode.
@@ -336,7 +336,7 @@ export function AppShell() {
     const webSerial = Boolean(navigator.serial);
     const webBluetooth = Boolean(navigator.bluetooth);
     setBrowserSupport({ webUsb, webSerial, webBluetooth });
-    setBrowserCapable(webUsb || webSerial || webBluetooth);
+    setBrowserCapable(webUsb && webSerial && webBluetooth);
     addLog("INFO", "Browser capability check completed.");
   }, [addLog]);
 
@@ -1147,17 +1147,17 @@ export function AppShell() {
 
         <div className="main-content">
           {browserCapable === false ? (
-            <div className="browser-notice" role="alert">
+            <section className="browser-notice splash-card" role="alert">
               <span className="browser-notice-icon"><AlertTriangle size={18} /></span>
-              <div className="browser-notice-body">
-                <strong>Chromium-based browser required</strong>
+              <div className="browser-notice-body splash-card-body">
+                <h3>Chromium-based browser required</h3>
                 <p>
                   WebUSB, Web Serial, and Web Bluetooth are only available in desktop Chrome or Edge.
                   Safari, Firefox, and mobile browsers are not supported.{" "}
                   <a href="https://www.google.com/chrome/" target="_blank" rel="noreferrer">Download Chrome →</a>
                 </p>
               </div>
-            </div>
+            </section>
           ) : null}
 
           <div className={`workspace-state${fadeStateClass}`} data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
