@@ -2004,8 +2004,7 @@ input[type="checkbox"] {
     max-width: none;
     height: auto;
     min-height: 100vh;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: visible;
   }
 
   .sidebar {

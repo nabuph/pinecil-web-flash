@@ -37,7 +37,8 @@ export const viewport: Viewport = {
     { media: "(prefers-color-scheme: light)", color: "#ffffff" }
   ],
   width: "device-width",
-  initialScale: 1
+  initialScale: 1,
+  viewportFit: "cover"
 };
 
 const themeScript = `(function(){var s=localStorage.getItem("pinecil-theme");var t=(s==="system"||s==="light"||s==="dark")?s:"system";var r=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;document.documentElement.dataset.theme=r;document.documentElement.style.colorScheme=r;})();`;
