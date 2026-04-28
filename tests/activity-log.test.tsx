@@ -12,7 +12,6 @@ function ActivityHarness({ phase, pulse = false }: { phase: FlashPhase; pulse?: 
   const [open, setOpen] = useState(false);
   return (
     <ActivityLog
-      fileName="Pinecilv2_EN.bin"
       logs={logs}
       onClear={vi.fn()}
       onOpenChange={setOpen}
@@ -20,8 +19,6 @@ function ActivityHarness({ phase, pulse = false }: { phase: FlashPhase; pulse?: 
       phase={phase}
       pulse={pulse}
       progress={phase === "connect" ? 0 : 100}
-      progressMessage={phase === "fail" ? "Flash failed." : "Ready."}
-      target="Pinecil V2 demo target"
     />
   );
 }
@@ -39,6 +36,17 @@ describe("ActivityLog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Activity Waiting for device" }));
 
     expect(screen.getByRole("button", { name: "Clear log" })).toBeInTheDocument();
+  });
+
+  it("expands directly to log lines without metadata rows", () => {
+    renderActivity();
+
+    fireEvent.click(screen.getByRole("button", { name: "Activity Waiting for device" }));
+
+    expect(screen.getByText("Ready.")).toBeInTheDocument();
+    expect(screen.queryByText("Target")).not.toBeInTheDocument();
+    expect(screen.queryByText("File")).not.toBeInTheDocument();
+    expect(screen.queryByText("Status")).not.toBeInTheDocument();
   });
 
   it("renders success and fail status states", () => {
@@ -69,6 +77,7 @@ describe("ActivityLog", () => {
     const { container } = render(<ActivityHarness phase="connect" pulse />);
 
     expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
+    expect(container.querySelector(".activity-progress-fill")).not.toBeInTheDocument();
   });
 
   it("pulses the progress track while preparing", () => {
@@ -91,5 +100,6 @@ describe("ActivityLog", () => {
     const { container } = render(<ActivityHarness phase="select" pulse />);
 
     expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
+    expect(container.querySelector(".activity-progress-fill")).not.toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_LANGUAGES, compatibleFirmwareReleases, findFirmwareAsset, findMetadataAsset, firmwareFileName, normalizeReleases, sampleReleases } from "@/lib/catalog/releases";
 import { KNOWN_BLE_SETTINGS, PinecilBleClient } from "@/lib/ble/pinecil-ble";
-import { prepareInstall, flashPrepared, type PreparedInstallFile } from "@/lib/flash/pipeline";
+import { prepareInstall, flashPrepared } from "@/lib/flash/pipeline";
 import { extractFirmwareFromZip, parseLanguagesFromMetadata } from "@/lib/firmware/zip";
 import { generateLogoFromImage } from "@/lib/logo/generator";
 import { WebSerialBlispFlasher } from "@/lib/protocol/blisp";
@@ -195,7 +195,6 @@ export function AppShell() {
   const [phase, setPhase] = useState<FlashPhase>("connect");
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("Waiting for device access.");
-  const [preparedFile, setPreparedFile] = useState<PreparedInstallFile>();
   const [logs, setLogs] = useState<LogLine[]>(initialLogs);
   const [activityOpen, setActivityOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -225,6 +224,7 @@ export function AppShell() {
   const backendRef = useRef<FlasherBackend | undefined>(undefined);
   const bleRef = useRef<PinecilBleClient | undefined>(undefined);
   const logoBuildIdRef = useRef(0);
+  const motionReadyRef = useRef(false);
   const preserveDoneOnDisconnectRef = useRef(false);
   const skipNextSelectionResetRef = useRef(false);
 
@@ -310,10 +310,6 @@ export function AppShell() {
       firmwareAssetIsBundled &&
       (!selectedRelease || selectedRelease.channel === "stable" || prereleaseConfirmed)
   );
-  const expectedFirmwareFile = activeModel
-    ? firmwareFileName(activeModel, language)
-    : "Connect a Pinecil to detect the file";
-
   // Theme
   useEffect(() => {
     const stored = window.localStorage.getItem("pinecil-theme");
@@ -343,6 +339,10 @@ export function AppShell() {
     setBrowserCapable(webUsb || webSerial || webBluetooth);
     addLog("INFO", "Browser capability check completed.");
   }, [addLog]);
+
+  useEffect(() => {
+    motionReadyRef.current = true;
+  }, []);
 
   // Load releases. The static deploy bundles a same-origin releases.json (see
   // scripts/bundle-releases.mjs) because release-assets.githubusercontent.com
@@ -448,7 +448,6 @@ export function AppShell() {
       return;
     }
     const bluetoothActive = Boolean(bleRef.current) || bleDemo;
-    setPreparedFile(undefined);
     setProgress(0);
     setPhase(target ? "select" : bluetoothActive ? "detect" : "connect");
     setProgressMessage(
@@ -495,7 +494,6 @@ export function AppShell() {
     }
     logoBuildIdRef.current += 1;
     setTarget(undefined);
-    setPreparedFile(undefined);
     setGeneratedLogo(undefined);
     setLogoDfuFile(undefined);
     setLogoImageFile(undefined);
@@ -651,7 +649,6 @@ export function AppShell() {
       setProgress(0);
       setProgressMessage("Preparing, validating, and hashing file.");
       const prepared = kind === "firmware" ? await prepareFirmwareForTarget() : await prepareLogoForTarget();
-      setPreparedFile(prepared);
       addLog("OK", `${prepared.fileName} validated (${formatBytes(prepared.bytes.length)}, SHA-256 ${prepared.sha256?.slice(0, 16)}...).`);
       preserveDoneOnDisconnectRef.current = true;
       const result = await flashPrepared(target, backendRef.current, prepared, setProgressFromEvent);
@@ -697,7 +694,6 @@ export function AppShell() {
       setLogoDfuFile(undefined);
       const prepared = await prepareInstall(target, { kind: "bootLogo", fileName: generated.fileName, bytes: generated.bytes });
       if (buildId !== logoBuildIdRef.current) return;
-      setPreparedFile(prepared);
       if (!silent) addLog("OK", `Generated ${generated.fileName} from ${file.name}.`);
     } catch (err) {
       if (buildId === logoBuildIdRef.current) {
@@ -734,7 +730,6 @@ export function AppShell() {
       setLogoImageFile(undefined);
       setLogoPan({ x: 0, y: 0, zoom: 1 });
       setGeneratedLogo(undefined);
-      setPreparedFile(prepared);
       setMode("logo");
       addLog("OK", `Selected existing boot-logo .dfu file ${file.name}.`);
     } catch (err) {
@@ -757,7 +752,6 @@ export function AppShell() {
       setLogoDfuFile(undefined);
       setLogoImageFile(undefined);
       setLogoPan({ x: 0, y: 0, zoom: 1 });
-      setPreparedFile(prepared);
       setMode("logo");
       addLog("OK", `Created default-logo restore .dfu file ${generated.fileName}. Flash it to return the boot logo to default.`);
     } catch (err) {
@@ -1025,11 +1019,6 @@ export function AppShell() {
     }
   }, [addLog, bleDemo]);
 
-  const targetSummary = target
-    ? `${target.label}${target.portName ? ` on ${target.portName}` : ""}`
-    : bleSnapshot
-      ? `${bleSnapshot.deviceName} via Bluetooth`
-    : "No Pinecil connected";
   const usbConnected = Boolean(target);
   const bluetoothConnected = Boolean(bleSnapshot);
   const usbConnectBusy = busy && phase === "connect";
@@ -1069,24 +1058,6 @@ export function AppShell() {
     }
     setMode(nextMode);
   }, [addLog, modeAvailability]);
-  const usbTitle = target?.transport === "demo"
-    ? "Demo target simulates a USB flash mode connection."
-    : usbConnected
-      ? `${target?.label} is connected for firmware/logo flashing.`
-      : "Connect over USB for firmware and boot-logo flashing.";
-  const bluetoothTitle = bluetoothConnected
-    ? `${bleSnapshot?.deviceName ?? "Pinecil"} is connected for runtime settings.`
-    : "Connect over Bluetooth for runtime settings.";
-  const modeLabel = target?.bootloader
-    ? "Flash"
-    : bluetoothConnected
-      ? "Normal"
-      : "Unknown";
-  const modeTitle = target?.bootloader
-    ? "Flash mode is used for firmware and boot-logo flashing."
-    : bluetoothConnected
-      ? "Normal powered mode is used for Bluetooth settings."
-      : "Connect a Pinecil to detect whether it is in flash mode or normal mode.";
   const modeHelp = target?.bootloader
     ? bluetoothConnected
       ? "USB flash mode is ready for flashing. Bluetooth may still be connected, but settings are changed in normal powered mode."
@@ -1124,18 +1095,10 @@ export function AppShell() {
   const usbConnectDisabled = busy || (browserCapable !== null && !browserSupport.webUsb && !browserSupport.webSerial);
   const bluetoothConnectDisabled = busy || (browserCapable !== null && !browserSupport.webBluetooth);
 
-  const activeFileName = preparedFile?.fileName
-    ?? (!mode
-      ? "No workspace selected"
-      : mode === "firmware"
-        ? expectedFirmwareFile
-        : mode === "logo"
-          ? generatedLogo?.fileName ?? logoDfuFile?.name ?? "No logo file selected"
-          : mode === "ble-settings"
-            ? "Bluetooth settings"
-            : mode === "ble"
-              ? "Live telemetry"
-              : "No file selected");
+  const workspaceStateKey = showSplash
+    ? `splash-${connected ? "unavailable" : "disconnected"}-${needsUsbForMode ? "usb" : needsBluetoothForMode ? "ble" : "any"}`
+    : `workspace-${connectionKind ?? "none"}-${mode ?? "none"}`;
+  const fadeStateClass = motionReadyRef.current ? " fade-in" : "";
 
   return (
     <div className="app-layout">
@@ -1145,6 +1108,7 @@ export function AppShell() {
         busy={busy}
         firmwareVersion={sidebarFirmwareVersion}
         bootRomVersion={sidebarBootRomVersion}
+        fadeContent={motionReadyRef.current}
         modeAvailability={modeAvailability}
         modeHelp={modeHelp}
         mode={mode}
@@ -1162,9 +1126,9 @@ export function AppShell() {
               <span className="sidebar-connection-indicator" aria-hidden="true">
                 <span className="sidebar-connection-dot" />
               </span>
-              <span>{mobileDisplayName}</span>
+              <span className={motionReadyRef.current ? "fade-in" : undefined} key={mobileDisplayName}>{mobileDisplayName}</span>
             </div>
-            {mobileModeLine ? <div className="mobile-device-meta">{mobileModeLine}</div> : null}
+            {mobileModeLine ? <div className={`mobile-device-meta${fadeStateClass}`} key={mobileModeLine}>{mobileModeLine}</div> : null}
           </div>
           <div className="mobile-connection-actions">
             {connected ? (
@@ -1196,94 +1160,95 @@ export function AppShell() {
             </div>
           ) : null}
 
-          {showSplash ? (
-            <WorkspaceSplash
-              busy={busy}
-              bluetoothConnectDisabled={bluetoothConnectDisabled}
-              usbConnectDisabled={usbConnectDisabled}
-              message={splashMessage}
-              onConnectBluetoothDemo={connectBluetoothDemo}
-              onConnectBluetooth={connectBluetoothOnly}
-              onConnectDemo={connectDemo}
-              onConnectPinecil={connectPinecil}
-              showBluetoothActions={!connected && !v1Connected && (!connected || needsBluetoothForMode)}
-              showConnectAction={!connected}
-              showUsbActions={!connected && (!connected || needsUsbForMode)}
-              title={splashTitle}
-            />
-          ) : (
-            <>
-              {mode === "firmware" ? (
-                <FirmwarePanel
-                  busy={busy}
-                  channelReleases={channelReleases}
-                  flashReady={flashReady && Boolean(firmwareAsset)}
-                  language={language}
-                  languages={languages}
-                  onChannel={setReleaseChannel}
-                  onFlash={() => runFlash("firmware")}
-                  onLanguage={setLanguage}
-                  onPrereleaseConfirmed={setPrereleaseConfirmed}
-                  onRelease={setSelectedReleaseTag}
-                  onSafetyChange={setConfirmations}
-                  prereleaseConfirmed={prereleaseConfirmed}
-                  releaseChannel={releaseChannel}
-                  selectedRelease={selectedRelease}
-                  selectedReleaseTag={selectedReleaseTag}
-                  safety={confirmations}
-                  target={target}
-                />
-              ) : null}
+          <div className={`workspace-state${fadeStateClass}`} data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
+            {showSplash ? (
+              <WorkspaceSplash
+                busy={busy}
+                bluetoothConnectDisabled={bluetoothConnectDisabled}
+                usbConnectDisabled={usbConnectDisabled}
+                message={splashMessage}
+                onConnectBluetoothDemo={connectBluetoothDemo}
+                onConnectBluetooth={connectBluetoothOnly}
+                onConnectDemo={connectDemo}
+                onConnectPinecil={connectPinecil}
+                showBluetoothActions={!connected && !v1Connected && (!connected || needsBluetoothForMode)}
+                showConnectAction={!connected}
+                showUsbActions={!connected && (!connected || needsUsbForMode)}
+                title={splashTitle}
+              />
+            ) : (
+              <>
+                {mode === "firmware" ? (
+                  <FirmwarePanel
+                    busy={busy}
+                    channelReleases={channelReleases}
+                    flashReady={flashReady && Boolean(firmwareAsset)}
+                    language={language}
+                    languages={languages}
+                    onChannel={setReleaseChannel}
+                    onFlash={() => runFlash("firmware")}
+                    onLanguage={setLanguage}
+                    onPrereleaseConfirmed={setPrereleaseConfirmed}
+                    onRelease={setSelectedReleaseTag}
+                    onSafetyChange={setConfirmations}
+                    prereleaseConfirmed={prereleaseConfirmed}
+                    releaseChannel={releaseChannel}
+                    selectedRelease={selectedRelease}
+                    selectedReleaseTag={selectedReleaseTag}
+                    safety={confirmations}
+                    target={target}
+                  />
+                ) : null}
 
-              {mode === "logo" ? (
-                <LogoStudio
-                  busy={busy}
-                  converting={logoBusy}
-                  generatedLogo={generatedLogo}
-                  imagePan={logoPan}
-                  invert={logoInvert}
-                  logoDfuFile={logoDfuFile}
-                  onDownload={downloadLogo}
-                  onErase={restoreDefaultLogo}
-                  onFlash={() => runFlash("bootLogo")}
-                  onImageFile={onLogoImageFile}
-                  onImagePan={setLogoPan}
-                  onInvert={setLogoInvert}
-                  onLogoDfuFile={onLogoDfuFile}
-                  onSafetyChange={setConfirmations}
-                  onThreshold={setLogoThreshold}
-                  safety={confirmations}
-                  safetyReady={safetyReady}
-                  target={target}
-                  threshold={logoThreshold}
-                />
-              ) : null}
+                {mode === "logo" ? (
+                  <LogoStudio
+                    busy={busy}
+                    converting={logoBusy}
+                    generatedLogo={generatedLogo}
+                    imagePan={logoPan}
+                    invert={logoInvert}
+                    logoDfuFile={logoDfuFile}
+                    onDownload={downloadLogo}
+                    onErase={restoreDefaultLogo}
+                    onFlash={() => runFlash("bootLogo")}
+                    onImageFile={onLogoImageFile}
+                    onImagePan={setLogoPan}
+                    onInvert={setLogoInvert}
+                    onLogoDfuFile={onLogoDfuFile}
+                    onSafetyChange={setConfirmations}
+                    onThreshold={setLogoThreshold}
+                    safety={confirmations}
+                    safetyReady={safetyReady}
+                    target={target}
+                    threshold={logoThreshold}
+                  />
+                ) : null}
 
-              {mode === "ble" ? (
-                <BlePanel
-                  snapshot={bleSnapshot}
-                  telemetryHistory={bleTelemetryHistory}
-                />
-              ) : null}
+                {mode === "ble" ? (
+                  <BlePanel
+                    snapshot={bleSnapshot}
+                    telemetryHistory={bleTelemetryHistory}
+                  />
+                ) : null}
 
-              {mode === "ble-settings" ? (
-                <BleSettingsPanel
-                  busy={busy}
-                  drafts={bleDrafts}
-                  onApply={applyBleDrafts}
-                  onDraftChange={updateBleDraft}
-                  onSave={saveBle}
-                  snapshot={bleSnapshot}
-                />
-              ) : null}
-            </>
-          )}
+                {mode === "ble-settings" ? (
+                  <BleSettingsPanel
+                    busy={busy}
+                    drafts={bleDrafts}
+                    onApply={applyBleDrafts}
+                    onDraftChange={updateBleDraft}
+                    onSave={saveBle}
+                    snapshot={bleSnapshot}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
 
         </div>
 
         <div className="activity-panel-outer">
           <ActivityLog
-            fileName={activeFileName}
             logs={logs}
             onClear={() => setLogs([])}
             onOpenChange={setActivityOpen}
@@ -1291,8 +1256,6 @@ export function AppShell() {
             phase={phase}
             pulse={activityPulse}
             progress={progress}
-            progressMessage={progressMessage}
-            target={targetSummary}
           />
         </div>
       </div>

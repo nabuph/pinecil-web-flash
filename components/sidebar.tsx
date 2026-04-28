@@ -32,6 +32,7 @@ export function Sidebar({
   bluetoothLabel,
   bluetoothDeviceName,
   busy,
+  fadeContent,
   firmwareVersion,
   bootRomVersion,
   modeAvailability,
@@ -46,6 +47,7 @@ export function Sidebar({
   bluetoothLabel: string;
   bluetoothDeviceName?: string;
   busy: boolean;
+  fadeContent?: boolean;
   // IronOS firmware version reported either by Bluetooth (running IronOS)
   // or by reading flash via the eflash_loader during BLISP connect. For the
   // demo target this is a faked string. Undefined if we couldn't determine
@@ -74,6 +76,7 @@ export function Sidebar({
   const modeLine = connected ? (target?.bootloader ? "Flash mode" : "Normal mode") : undefined;
   const firmwareLine = firmwareVersion ? `Firmware ${firmwareVersion}` : undefined;
   const bootRomLine = bootRomVersion ? `Boot ROM ${bootRomVersion}` : undefined;
+  const fadeClass = fadeContent ? "fade-in" : undefined;
 
   return (
     <aside className="sidebar">
@@ -119,20 +122,20 @@ export function Sidebar({
             <span className="sidebar-connection-indicator" aria-hidden="true">
               <span className="sidebar-connection-dot" />
             </span>
-            <span>{displayName}</span>
+            <span className={fadeClass} key={displayName}>{displayName}</span>
           </div>
           {(firmwareLine || bootRomLine || modeLine) ? (
-            <div className="sidebar-device-meta">
+            <div className={`sidebar-device-meta${fadeContent ? " fade-in" : ""}`} key={`${firmwareLine ?? ""}-${bootRomLine ?? ""}-${modeLine ?? ""}`}>
               {firmwareLine ? <div>{firmwareLine}</div> : null}
               {bootRomLine ? <div>{bootRomLine}</div> : null}
               {modeLine ? <div>{modeLine}</div> : null}
             </div>
           ) : null}
-          {connected && modeHelp ? <p className="sidebar-mode-help">{modeHelp}</p> : null}
+          {connected && modeHelp ? <p className={`sidebar-mode-help${fadeContent ? " fade-in" : ""}`} key={modeHelp}>{modeHelp}</p> : null}
         </div>
 
         {connected ? (
-          <div className="sidebar-connect-btns">
+          <div className={`sidebar-connect-btns${fadeContent ? " fade-in" : ""}`}>
             <button
               className="btn btn-sm"
               disabled={busy}

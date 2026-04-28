@@ -341,6 +341,9 @@ a {
   flex: 0 0 8px;
   border-radius: 50%;
   background: var(--pulse-color);
+  transition:
+    background-color var(--dur-slow) var(--ease),
+    box-shadow var(--dur-slow) var(--ease);
 }
 
 .sidebar-connection-dot::before,
@@ -388,6 +391,15 @@ a {
 @keyframes chip-settle {
   from { opacity: 0.72; transform: translateY(1px); }
   to { opacity: 1; transform: none; }
+}
+
+.fade-in {
+  animation: fade-in var(--dur-base) linear both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .sidebar-mode-help {
@@ -698,40 +710,6 @@ a {
 .activity-expanded {
   border-top: 1px solid var(--border);
   height: var(--footer-panel-h);
-  display: grid;
-  grid-template-columns: 280px 1fr;
-}
-
-.activity-meta {
-  padding: 14px 16px;
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.activity-meta-row {
-  display: grid;
-  grid-template-columns: 60px 1fr;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.activity-meta-row dt {
-  color: var(--fg-subtle);
-}
-
-.activity-meta-row dd {
-  color: var(--fg-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  min-width: 0;
-  overflow: hidden;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
 }
 
 .log-list {
@@ -1933,6 +1911,10 @@ input[type="checkbox"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .fade-in,
+  .chip,
+  .toast,
+  .spin,
   .iron-schematic[data-flashing="true"] .iron-tip-path {
     animation: none;
   }
@@ -2116,15 +2098,6 @@ input[type="checkbox"] {
   }
 
   .activity-panel-outer { padding: 0 16px 16px; }
-
-  .activity-expanded {
-    grid-template-columns: 1fr;
-  }
-
-  .activity-meta {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
 
   .form-grid,
   .firmware-grid,

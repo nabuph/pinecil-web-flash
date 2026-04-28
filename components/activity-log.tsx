@@ -17,22 +17,18 @@ const phaseLabels: Record<FlashPhase, string> = {
   fail:     "Failed"
 };
 
-const indeterminatePhases: FlashPhase[] = ["validate", "detect"];
+const indeterminatePhases: FlashPhase[] = ["validate"];
 const pulsingPhases: FlashPhase[] = ["detect", "validate", "verify"];
 
 export function ActivityLog({
-  fileName,
   logs,
   onClear,
   onOpenChange,
   open,
   phase,
   pulse,
-  progress,
-  progressMessage,
-  target
+  progress
 }: {
-  fileName: string;
   logs: LogLine[];
   onClear(): void;
   onOpenChange(open: boolean): void;
@@ -40,13 +36,13 @@ export function ActivityLog({
   phase: FlashPhase;
   pulse?: boolean;
   progress: number;
-  progressMessage: string;
-  target: string;
 }) {
   const isIndeterminate = indeterminatePhases.includes(phase);
   const fillPct = isIndeterminate ? 0 : progress;
   const activityState = phase === "done" ? "success" : phase === "fail" ? "fail" : "active";
   const isLongRunning = activityState === "active" && (pulsingPhases.includes(phase) || Boolean(pulse));
+  const pulseOnly = Boolean(pulse) && activityState === "active" && phase !== "validate" && phase !== "flash" && phase !== "verify";
+  const showProgressFill = !pulseOnly && (isIndeterminate || progress > 0 || activityState !== "active");
   const logListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,14 +62,16 @@ export function ActivityLog({
 
           <div className="activity-progress-wrap">
             <div className="activity-progress-track" data-pulse={isLongRunning ? "true" : "false"}>
-              <div
-                className="activity-progress-fill"
-                data-indeterminate={isIndeterminate ? "true" : "false"}
-                data-state={activityState}
-                style={{ width: `${fillPct}%` }}
-              />
+              {showProgressFill ? (
+                <div
+                  className="activity-progress-fill"
+                  data-indeterminate={isIndeterminate ? "true" : "false"}
+                  data-state={activityState}
+                  style={{ width: `${fillPct}%` }}
+                />
+              ) : null}
             </div>
-            {progress > 0 && !isIndeterminate ? (
+            {showProgressFill && progress > 0 && !isIndeterminate ? (
               <span className="activity-progress-label">{progress}%</span>
             ) : null}
           </div>
@@ -101,20 +99,6 @@ export function ActivityLog({
 
       {open ? (
         <div className="activity-expanded">
-          <dl className="activity-meta">
-            <div className="activity-meta-row">
-              <dt>Target</dt>
-              <dd>{target}</dd>
-            </div>
-            <div className="activity-meta-row">
-              <dt>File</dt>
-              <dd>{fileName}</dd>
-            </div>
-            <div className="activity-meta-row">
-              <dt>Status</dt>
-              <dd>{progressMessage}</dd>
-            </div>
-          </dl>
           <div className="log-list" aria-live="polite" ref={logListRef}>
             {logs.map((line, index) => (
               <p key={`${line.time}-${index}`}>
