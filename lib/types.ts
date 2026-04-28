@@ -65,6 +65,8 @@ export interface FlashProgress {
   current: number;
   total: number;
   level?: "info" | "warn" | "error" | "success";
+  log?: boolean;
+  trace?: boolean;
 }
 
 export interface FlashResult {

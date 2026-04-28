@@ -111,7 +111,10 @@ function readTelemetry(view: DataView): Record<string, number> {
 }
 
 export class PinecilBleClient {
+  static onDisconnect: (source: PinecilBleClient) => void = () => undefined;
+  private device?: BluetoothDevice;
   private server?: BluetoothRemoteGATTServer;
+  private disconnectListener?: () => void;
   private readOnly = false;
 
   async connect(): Promise<string> {
@@ -121,6 +124,9 @@ export class PinecilBleClient {
       optionalServices: [BLE_BULK_SERVICE, BLE_LIVE_SERVICE, BLE_SETTINGS_SERVICE]
     });
     if (!device.gatt) throw new Error("Selected device does not expose GATT.");
+    this.device = device;
+    this.disconnectListener = () => PinecilBleClient.onDisconnect(this);
+    (device as unknown as EventTarget).addEventListener("gattserverdisconnected", this.disconnectListener);
     this.server = await device.gatt.connect();
     return device.name ?? "Pinecil V2";
   }
@@ -186,8 +192,15 @@ export class PinecilBleClient {
   }
 
   disconnect() {
+    if (this.device && this.disconnectListener) {
+      try {
+        (this.device as unknown as EventTarget).removeEventListener("gattserverdisconnected", this.disconnectListener);
+      } catch { /* ignore */ }
+    }
     this.server?.disconnect();
     this.server = undefined;
+    this.device = undefined;
+    this.disconnectListener = undefined;
   }
 
   private async readText(service: BluetoothRemoteGATTService, uuid: string) {

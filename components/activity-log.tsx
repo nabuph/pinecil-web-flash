@@ -18,7 +18,7 @@ const phaseLabels: Record<FlashPhase, string> = {
 };
 
 const indeterminatePhases: FlashPhase[] = ["validate", "detect"];
-const pulsingPhases: FlashPhase[] = ["detect", "validate"];
+const pulsingPhases: FlashPhase[] = ["detect", "validate", "verify"];
 
 export function ActivityLog({
   fileName,

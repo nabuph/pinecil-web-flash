@@ -81,6 +81,12 @@ describe("ActivityLog", () => {
     expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
   });
 
+  it("pulses the progress track while verifying", () => {
+    const { container } = renderActivity("verify");
+
+    expect(container.querySelector(".activity-progress-track")).toHaveAttribute("data-pulse", "true");
+  });
+
   it("can pulse the progress track for Bluetooth activity outside flash phases", () => {
     const { container } = render(<ActivityHarness phase="select" pulse />);
 

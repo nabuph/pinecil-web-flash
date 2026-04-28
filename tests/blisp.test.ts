@@ -128,4 +128,80 @@ describe("BLISP helpers", () => {
     expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
     expect(writes[2]).toEqual(encodeBlispCommand(0x10));
   });
+
+  it("auto-selects a previously authorized Pinecil V2 serial port", async () => {
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([1, 2, 3, 4])
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>()
+    };
+    const requestPort = vi.fn();
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: {
+        getPorts: vi.fn(async () => [port]),
+        requestPort
+      }
+    });
+
+    const target = await new WebSerialBlispFlasher().connect();
+
+    expect(target.transport).toBe("webserial-blisp");
+    expect(requestPort).not.toHaveBeenCalled();
+    expect(port.open).toHaveBeenCalledOnce();
+  });
+
+  it("auto-selects the only previously authorized serial port when USB IDs are hidden", async () => {
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([1, 2, 3, 4])
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({}),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>()
+    };
+    const requestPort = vi.fn();
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: {
+        getPorts: vi.fn(async () => [port]),
+        requestPort
+      }
+    });
+
+    const target = await new WebSerialBlispFlasher().connect();
+
+    expect(target.transport).toBe("webserial-blisp");
+    expect(requestPort).not.toHaveBeenCalled();
+    expect(port.open).toHaveBeenCalledOnce();
+  });
 });

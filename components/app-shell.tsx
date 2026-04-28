@@ -33,7 +33,7 @@ import { LogoStudio } from "@/components/logo-studio";
 import { BlePanel, BleSettingsPanel } from "@/components/ble-panel";
 
 const initialLogs: LogLine[] = [
-  { time: "--:--:--", level: "INFO", message: "Pinecil Web Flash loaded (BLISP sync build)." },
+  { time: "--:--:--", level: "INFO", message: "Pinecil Web Flash loaded." },
   { time: "--:--:--", level: "WARN", message: "Use a Chromium desktop browser for WebUSB, Web Serial, and Web Bluetooth." }
 ];
 
@@ -236,7 +236,10 @@ export function AppShell() {
   // failures during connect) into the activity log. Static hookup; the log
   // module is shared across all WebSerialBlispFlasher instances.
   useEffect(() => {
-    WebSerialBlispFlasher.onLog = addLog;
+    const showTraceLog = process.env.NODE_ENV !== "production";
+    WebSerialBlispFlasher.onLog = (level, message, options) => {
+      if (!options?.trace || showTraceLog) addLog(level, message);
+    };
     return () => {
       WebSerialBlispFlasher.onLog = () => undefined;
     };
@@ -245,13 +248,24 @@ export function AppShell() {
   const disconnectListenerRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     // Wire physical-cable-unplug detection. The SerialPort's "disconnect"
-    // event fires from the BLISP backend; we react by clearing UI state the
-    // same way the user clicking Disconnect does.
-    WebSerialBlispFlasher.onDisconnect = () => disconnectListenerRef.current();
+    // event fires from the BLISP backend and WebUSB's equivalent fires from
+    // the DFU backend. Source checks prevent stale backends from clearing a
+    // newer connection during quick unplug/replug cycles.
+    WebSerialBlispFlasher.onDisconnect = (source) => {
+      if (backendRef.current !== source) return;
+      if (!preserveDoneOnDisconnectRef.current) addLog("WARN", "USB cable disconnected.");
+      disconnectListenerRef.current();
+    };
+    WebUsbDfuFlasher.onDisconnect = (source) => {
+      if (backendRef.current !== source) return;
+      if (!preserveDoneOnDisconnectRef.current) addLog("WARN", "USB cable disconnected.");
+      disconnectListenerRef.current();
+    };
     return () => {
       WebSerialBlispFlasher.onDisconnect = () => undefined;
+      WebUsbDfuFlasher.onDisconnect = () => undefined;
     };
-  }, []);
+  }, [addLog]);
 
   const appendBleTelemetry = useCallback((telemetry: Record<string, number>, at = Date.now()) => {
     setBleTelemetryHistory((history) => [...history, { at, telemetry: { ...telemetry } }].slice(-90));
@@ -456,6 +470,21 @@ export function AppShell() {
     setBleDrafts(makeBleDrafts({ deviceName: "Pinecil V2", readOnly: false, telemetry: {}, settings: KNOWN_BLE_SETTINGS }));
   }, [addLog]);
 
+  useEffect(() => {
+    PinecilBleClient.onDisconnect = (source) => {
+      if (bleRef.current !== source) return;
+      addLog("WARN", "Bluetooth device disconnected.");
+      clearBluetoothState();
+      setMode(undefined);
+      setPhase("connect");
+      setProgress(0);
+      setProgressMessage("Waiting for device access.");
+    };
+    return () => {
+      PinecilBleClient.onDisconnect = () => undefined;
+    };
+  }, [addLog, clearBluetoothState]);
+
   const clearUsbState = useCallback(() => {
     const backend = backendRef.current;
     backendRef.current = undefined;
@@ -476,16 +505,19 @@ export function AppShell() {
   const setProgressFromEvent = useCallback(
     (event: FlashProgress) => {
       const next = event.total ? Math.round((event.current / event.total) * 100) : 0;
+      const showTraceLog = process.env.NODE_ENV !== "production";
       setPhase(event.phase);
       setProgress(next);
       setProgressMessage(event.message);
-      addLog(
-        event.level === "error" ? "ERROR"
-          : event.level === "warn" ? "WARN"
-          : event.level === "success" ? "OK"
-          : "INFO",
-        event.message
-      );
+      if (event.log !== false && (!event.trace || showTraceLog)) {
+        addLog(
+          event.level === "error" ? "ERROR"
+            : event.level === "warn" ? "WARN"
+            : event.level === "success" ? "OK"
+            : "INFO",
+          event.message
+        );
+      }
     },
     [addLog]
   );
@@ -780,7 +812,9 @@ export function AppShell() {
     try {
       await connectUsb();
     } catch (err) {
-      if (!isUserCancellation(err)) {
+      if (isUserCancellation(err)) {
+        setProgressMessage("Waiting for device access.");
+      } else {
         addLog("ERROR", err instanceof Error ? err.message : "USB connection failed.");
       }
     } finally {
@@ -798,13 +832,16 @@ export function AppShell() {
     } catch (err) {
       bleRef.current = undefined;
       setBleSnapshot(undefined);
-      if (!isUserCancellation(err)) {
+      if (isUserCancellation(err)) {
+        setPhase(target ? "select" : "connect");
+        setProgressMessage(target ? "Ready to flash. Validation will run automatically." : "Waiting for device access.");
+      } else {
         addLog("ERROR", err instanceof Error ? err.message : "Bluetooth connection failed.");
       }
     } finally {
       setBusy(false);
     }
-  }, [addLog, connectBluetooth]);
+  }, [addLog, connectBluetooth, target]);
 
   const connectPinecil = useCallback(async () => {
     await connectUsbOnly();

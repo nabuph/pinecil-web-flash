@@ -173,13 +173,21 @@ async function sleep(ms: number) {
 
 export class WebUsbDfuFlasher implements FlasherBackend {
   private device?: USBDevice;
+  private usb?: USB;
   private interfaceNumber = 0;
+  private disconnectListener?: (event: Event) => void;
+  static onDisconnect: (source: WebUsbDfuFlasher) => void = () => undefined;
 
   async connect(): Promise<FlashTarget> {
     if (!navigator.usb) throw new Error("WebUSB is not available in this browser.");
-    this.device = await navigator.usb.requestDevice({
+    this.usb = navigator.usb;
+    this.device = await this.usb.requestDevice({
       filters: [{ vendorId: PINECIL_V1_VENDOR_ID }, { classCode: DFU_CLASS, subclassCode: DFU_SUBCLASS }]
     });
+    this.disconnectListener = (event) => {
+      if ((event as Event & { device?: USBDevice }).device === this.device) WebUsbDfuFlasher.onDisconnect(this);
+    };
+    (this.usb as unknown as EventTarget).addEventListener("disconnect", this.disconnectListener);
     if (!this.device.opened) await this.device.open();
     if (!this.device.configuration) await this.device.selectConfiguration(1);
     const dfuInterface = this.device.configuration?.interfaces.find((item) =>
@@ -223,7 +231,8 @@ export class WebUsbDfuFlasher implements FlasherBackend {
           phase: "flash",
           message: `Writing DFU block ${block}`,
           current: written,
-          total
+          total,
+          trace: true
         });
         block += 1;
       }
@@ -237,13 +246,20 @@ export class WebUsbDfuFlasher implements FlasherBackend {
 
   async close(): Promise<void> {
     if (!this.device) return;
+    if (this.usb && this.disconnectListener) {
+      try {
+        (this.usb as unknown as EventTarget).removeEventListener("disconnect", this.disconnectListener);
+      } catch { /* ignore */ }
+    }
+    this.disconnectListener = undefined;
     try {
       await this.device.releaseInterface(this.interfaceNumber);
     } catch {
       // The device may already have reset after flashing.
     }
-    await this.device.close();
+    await this.device.close().catch(() => undefined);
     this.device = undefined;
+    this.usb = undefined;
   }
 
   private async sendAddressPointer(address: number) {

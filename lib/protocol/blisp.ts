@@ -13,6 +13,12 @@ export const BL70X_HANDSHAKE_BURST_BYTES = Math.min(
   600,
   Math.floor((BL70X_HANDSHAKE_BYTE_MULTIPLIER * DEFAULT_BAUD_RATE) / 10)
 );
+type SerialPortFilterLike = { usbVendorId: number; usbProductId?: number };
+type WebSerial = NonNullable<Navigator["serial"]>;
+
+const PINECIL_V2_SERIAL_FILTERS: SerialPortFilterLike[] = [
+  { usbVendorId: 0x1a86, usbProductId: 0x55d4 }
+];
 const BL70X_FLASH_MAP_ADDR = 0x23000000;
 const PINECIL_V2_FIRMWARE_OFFSET = 0x2000;
 const BL70X_FLASH_SECTOR_SIZE = 4096;
@@ -69,6 +75,44 @@ function elapsedMs(startedAt: number): number {
 
 function isBlispFailureError(err: unknown): boolean {
   return err instanceof Error && /BLISP device returned failure/.test(err.message);
+}
+
+function isKnownPinecilV2SerialPort(port: SerialPort): boolean {
+  const info = port.getInfo();
+  return PINECIL_V2_SERIAL_FILTERS.some((filter) =>
+    info.usbVendorId === filter.usbVendorId &&
+      (filter.usbProductId === undefined || info.usbProductId === filter.usbProductId)
+  );
+}
+
+async function selectPinecilV2SerialPort(serial: WebSerial): Promise<{ port: SerialPort; autoSelected: boolean }> {
+  const authorizedPorts = typeof serial.getPorts === "function"
+    ? await serial.getPorts().catch(() => [])
+    : [];
+  const matches = authorizedPorts.filter(isKnownPinecilV2SerialPort);
+  if (matches.length === 1) {
+    return { port: matches[0], autoSelected: true };
+  }
+  if (matches.length === 0 && authorizedPorts.length === 1) {
+    WebSerialBlispFlasher.onLog(
+      "INFO",
+      "Using the only previously authorized USB serial port."
+    );
+    return { port: authorizedPorts[0], autoSelected: true };
+  }
+  if (matches.length > 1) {
+    WebSerialBlispFlasher.onLog(
+      "INFO",
+      "Multiple previously authorized Pinecil V2 serial ports are available; opening the picker."
+    );
+  }
+  return {
+    // Keep the manual picker broad: some OS/browser combinations expose the
+    // Pinecil's USB CDC bridge with a different PID than getInfo() reports
+    // after permission is granted.
+    port: await serial.requestPort(),
+    autoSelected: false
+  };
 }
 
 export function eraseResponseTimeoutMs(byteLength: number): number {
@@ -211,9 +255,9 @@ class SerialBlispSession {
   async close() {
     this.streamClosed = true;
     await this.reader?.cancel().catch(() => undefined);
-    this.reader?.releaseLock();
-    this.writer?.releaseLock();
-    await this.port.close();
+    try { this.reader?.releaseLock(); } catch { /* ignore */ }
+    try { this.writer?.releaseLock(); } catch { /* ignore */ }
+    await this.port.close().catch(() => undefined);
   }
 
   async write(bytes: Uint8Array) {
@@ -333,23 +377,30 @@ export class WebSerialBlispFlasher implements FlasherBackend {
   // Static log sink so app-shell can surface BLISP-internal progress and
   // soft errors without us having to plumb a callback through every method.
   // Defaults to a no-op; app-shell installs an addLog adapter at mount.
-  static onLog: (level: "INFO" | "OK" | "WARN" | "ERROR", message: string) => void =
+  static onLog: (
+    level: "INFO" | "OK" | "WARN" | "ERROR",
+    message: string,
+    options?: { trace?: boolean }
+  ) => void =
     () => undefined;
   // Fired when the underlying SerialPort raises a 'disconnect' event (e.g.
   // the user pulled the USB cable). app-shell uses this to clear connected
   // state instead of waiting for the next operation to fail.
-  static onDisconnect: () => void = () => undefined;
+  static onDisconnect: (source: WebSerialBlispFlasher) => void = () => undefined;
   private disconnectListener?: () => void;
 
   async connect(): Promise<FlashTarget> {
     if (!navigator.serial) throw new Error("Web Serial is not available in this browser.");
-    this.port = await navigator.serial.requestPort();
+    const selection = await selectPinecilV2SerialPort(navigator.serial);
+    this.port = selection.port;
+    if (selection.autoSelected) {
+      WebSerialBlispFlasher.onLog("INFO", "Using previously authorized Pinecil V2 USB serial port.");
+    }
     this.session = new SerialBlispSession(this.port);
     // Notify the app immediately when the cable is unplugged. Without this
     // the UI keeps showing "Connected" until the next operation fails.
     this.disconnectListener = () => {
-      WebSerialBlispFlasher.onLog("WARN", "USB cable disconnected.");
-      WebSerialBlispFlasher.onDisconnect();
+      WebSerialBlispFlasher.onDisconnect(this);
     };
     this.port.addEventListener("disconnect", this.disconnectListener);
     try {
@@ -476,7 +527,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       try { this.port.removeEventListener("disconnect", this.disconnectListener); } catch { /* ignore */ }
     }
     this.disconnectListener = undefined;
-    await this.session?.close();
+    await this.session?.close().catch(() => undefined);
     this.session = undefined;
     this.port = undefined;
     this.bootloaderReady = false;
@@ -509,7 +560,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       phase: "detect",
       message: inEflashLoader ? "Re-handshaking with eflash_loader" : "Sending BLISP handshake",
       current: 0,
-      total: 1
+      total: 1,
+      trace: true
     });
 
     // BL70x over USB CDC needs a wake-up probe before the 'U' burst when
@@ -562,14 +614,16 @@ export class WebSerialBlispFlasher implements FlasherBackend {
             phase: "detect",
             message: `Boot ROM ${this.bootRomVersion ?? "detected"}`,
             current: 1,
-            total: 1
+            total: 1,
+            trace: true
           });
         } else {
           onProgress?.({
             phase: "detect",
             message: "eflash_loader handshake OK",
             current: 1,
-            total: 1
+            total: 1,
+            trace: true
           });
         }
         return;
@@ -593,7 +647,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     // ROM and must load it before issuing flash erase/write commands.
     let inRomBootloader = this.bootloaderReady;
     try {
-      onProgress({ phase: "detect", message: "Checking BL70x loader state", current: 0, total });
+      onProgress({ phase: "detect", message: "Checking BL70x loader state", current: 0, total, trace: true });
       const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true, 500);
       const bootRomVersion = bootInfo.slice(0, 4);
       const alreadyInEflashLoader =
@@ -620,7 +674,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     }
 
     if (!inRomBootloader) {
-      onProgress({ phase: "detect", message: "Re-handshaking with BL70x ROM", current: 0, total });
+      onProgress({ phase: "detect", message: "Re-handshaking with BL70x ROM", current: 0, total, trace: true });
       await this.handshake(onProgress);
       this.bootloaderReady = true;
       await this.session.readChunk(40);
@@ -642,7 +696,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     await this.eflashHandshake(onProgress);
     const drained = await this.session.readChunk(40);
     if (drained.length > 0) {
-      WebSerialBlispFlasher.onLog("INFO", `Drained ${drained.length} trailing byte(s) after ${context}.`);
+      WebSerialBlispFlasher.onLog("INFO", `Drained ${drained.length} trailing byte(s) after ${context}.`, { trace: true });
     }
     this.eflashLoaderReady = true;
     this.bootloaderReady = true;
@@ -658,7 +712,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       await this.confirmEflashLoaderReady(onProgress, total, "eflash_loader refresh");
     } catch {
       this.eflashLoaderReady = false;
-      onProgress({ phase: "detect", message: "Refreshing BL70x serial session", current: 0, total });
+      onProgress({ phase: "detect", message: "Refreshing BL70x serial session", current: 0, total, trace: true });
       await this.reopenSerialSession();
       try {
         await this.confirmEflashLoaderReady(onProgress, total, "refreshed eflash_loader session");
@@ -699,7 +753,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
         (scanned, total) => {
           if (scanned - lastReported >= 32 * 1024) {
             lastReported = scanned;
-            log("INFO", `Scanning flash for version: ${(scanned / 1024) | 0} / ${(total / 1024) | 0} KiB`);
+            log("INFO", `Scanning flash for version: ${(scanned / 1024) | 0} / ${(total / 1024) | 0} KiB`, { trace: true });
           }
         }
       );
@@ -752,7 +806,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     // PD responses until OK.
     log(
       "INFO",
-      `BLISP flash_erase 0x${address.toString(16).padStart(8, "0")}..0x${eraseEnd.toString(16).padStart(8, "0")} (${bytes.length.toLocaleString()} bytes, timeout ${eraseTimeoutMs} ms)`
+      `BLISP flash_erase 0x${address.toString(16).padStart(8, "0")}..0x${eraseEnd.toString(16).padStart(8, "0")} (${bytes.length.toLocaleString()} bytes, timeout ${eraseTimeoutMs} ms)`,
+      { trace: true }
     );
     const eraseStartedAt = performance.now();
     await this.session.command(
@@ -762,18 +817,25 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       false,
       eraseTimeoutMs
     );
-    log("INFO", `BLISP flash_erase OK after ${elapsedMs(eraseStartedAt)} ms`);
+    log("INFO", `BLISP flash_erase OK after ${elapsedMs(eraseStartedAt)} ms`, { trace: true });
     await delay(BL70X_POST_ERASE_SETTLE_MS);
     const chunkSize = flashWriteChunkSize();
     let sent = 0;
     let lastReportedSent = 0;
+    onProgress({
+      phase: "flash",
+      message: "Writing firmware to flash",
+      current: baseProgress,
+      total
+    });
     for (let offset = 0; offset < bytes.length; offset += chunkSize) {
       const chunk = bytes.slice(offset, offset + chunkSize);
       const chunkAddress = address + offset;
       if (offset === 0) {
         log(
           "INFO",
-          `Starting BLISP flash_write at 0x${chunkAddress.toString(16).padStart(8, "0")} (chunk ${chunk.length} bytes, timeout ${BL70X_FLASH_WRITE_TIMEOUT_MS} ms)`
+          `Starting BLISP flash_write at 0x${chunkAddress.toString(16).padStart(8, "0")} (chunk ${chunk.length} bytes, timeout ${BL70X_FLASH_WRITE_TIMEOUT_MS} ms)`,
+          { trace: true }
         );
       }
       const payload = concatBytes([le32(chunkAddress), chunk]);
@@ -832,7 +894,9 @@ export class WebSerialBlispFlasher implements FlasherBackend {
         );
       }
       sent += chunk.length;
-      await delay(BL70X_FLASH_WRITE_INTER_CHUNK_DELAY_MS);
+      if (BL70X_FLASH_WRITE_INTER_CHUNK_DELAY_MS > 0) {
+        await delay(BL70X_FLASH_WRITE_INTER_CHUNK_DELAY_MS);
+      }
       if (
         sent === bytes.length ||
         lastReportedSent === 0 ||
@@ -843,7 +907,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
           phase: "flash",
           message: `Writing ${sent.toLocaleString()} of ${bytes.length.toLocaleString()} bytes`,
           current: baseProgress + sent,
-          total
+          total,
+          trace: true
         });
       }
     }

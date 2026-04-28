@@ -283,7 +283,8 @@ export async function loadEflashLoader(
     phase: "detect",
     message: "Loading eflash_loader (boot header)",
     current: 0,
-    total: eflashLoaderBytes.length
+    total: eflashLoaderBytes.length,
+    trace: true
   });
   try {
     await session.command(0x11, buildRamLoadBootHeader(), false, false, LOAD_COMMAND_TIMEOUT_MS);
@@ -297,7 +298,8 @@ export async function loadEflashLoader(
     phase: "detect",
     message: "Loading eflash_loader (segment header)",
     current: 0,
-    total: eflashLoaderBytes.length
+    total: eflashLoaderBytes.length,
+    trace: true
   });
   try {
     await session.command(
@@ -361,7 +363,8 @@ export async function loadEflashLoader(
         phase: "detect",
         message: `Loading eflash_loader (${loaded} of ${eflashLoaderBytes.length} bytes)`,
         current: loaded,
-        total: eflashLoaderBytes.length
+        total: eflashLoaderBytes.length,
+        trace: true
       });
     }
     await delay(LOAD_SEGMENT_PACE_MS);
@@ -372,7 +375,8 @@ export async function loadEflashLoader(
     phase: "detect",
     message: "Verifying eflash_loader image",
     current: eflashLoaderBytes.length,
-    total: eflashLoaderBytes.length
+    total: eflashLoaderBytes.length,
+    trace: true
   });
   try {
     await session.command(0x19, new Uint8Array(), false, false, LOAD_COMMAND_TIMEOUT_MS);
