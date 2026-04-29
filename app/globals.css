@@ -1695,6 +1695,10 @@ input[type="checkbox"] {
   stroke-width: 1.8;
 }
 
+.telemetry-secondary-group {
+  container-type: inline-size;
+}
+
 .telemetry-secondary-row {
   display: grid;
   grid-template-columns: minmax(104px, 0.9fr) minmax(0, 1fr);
@@ -1793,6 +1797,22 @@ input[type="checkbox"] {
 .settings-row-meta[data-tone="neutral"] {
   border: 1px solid var(--border-raised);
   color: var(--fg-muted);
+}
+
+@container (max-width: 380px) {
+  .settings-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .settings-row dt {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .settings-row dd {
+    justify-content: flex-start;
+  }
 }
 
 .ble-settings-panel {
@@ -2224,8 +2244,7 @@ input[type="checkbox"] {
 
   .form-grid,
   .firmware-grid,
-  .grouped-panel-grid,
-  .safety-checklist-items {
+  .grouped-panel-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -2297,8 +2316,7 @@ input[type="checkbox"] {
   .form-grid,
   .firmware-grid,
   .logo-grid,
-  .grouped-panel-grid,
-  .safety-checklist-items {
+  .grouped-panel-grid {
     grid-template-columns: 1fr;
   }
 
