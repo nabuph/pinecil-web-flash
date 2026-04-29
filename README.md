@@ -4,10 +4,6 @@ A browser-based flashing and configuration tool for the [Pine64 Pinecil](https:/
 
 **Live site:** https://natephillips3.github.io/pinecil-web-flash/
 
-## Screenshot
-
-![Pinecil Web Flash showing the Bluetooth telemetry demo](docs/app-screenshot.png)
-
 ## Why a browser tool?
 
 The two existing options for managing a Pinecil require installing software on your machine:
