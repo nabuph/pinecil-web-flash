@@ -1054,30 +1054,63 @@ input[type="checkbox"] {
   word-break: break-all;
 }
 
-/* ── Safety checklist ────────────────────────────────────────────────────── */
-.safety-checklist {
+/* ── Grouped panels ──────────────────────────────────────────────────────── */
+.grouped-panel {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  overflow: hidden;
+  background: var(--bg);
+  overflow: visible;
 }
 
-.safety-checklist-heading {
+.grouped-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.grouped-panel-heading {
+  min-height: 38px;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 14px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
+  border-radius: calc(var(--r-md) - 1px) calc(var(--r-md) - 1px) 0 0;
   background: var(--bg-overlay);
+  color: var(--fg-muted);
   font-size: 12px;
   font-weight: 600;
-  color: var(--fg-muted);
 }
 
-.safety-checklist-items {
+.grouped-panel-heading svg {
+  flex: 0 0 auto;
+  color: var(--fg-subtle);
+}
+
+.grouped-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.grouped-panel-list {
   display: grid;
   grid-template-columns: 1fr;
+  margin: 0;
 }
 
+.grouped-panel-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.grouped-panel-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Safety checklist ────────────────────────────────────────────────────── */
 .safety-item {
   display: flex;
   align-items: center;
@@ -1085,11 +1118,9 @@ input[type="checkbox"] {
   padding: 10px 14px;
   font-size: 12px;
   color: var(--fg-muted);
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--dur-base);
 }
-.safety-item:last-child { border-bottom: none; }
 .safety-item:hover { background: var(--bg-raised); }
 
 .safety-item svg {
@@ -1493,15 +1524,17 @@ input[type="checkbox"] {
 }
 
 .telemetry-chart-frame {
+  --telemetry-chart-axis-gap: 8px;
+  --telemetry-chart-axis-width: 54px;
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-columns: var(--telemetry-chart-axis-width) minmax(0, 1fr);
   grid-template-rows: minmax(108px, 128px) 18px;
-  gap: 6px 8px;
+  gap: 6px var(--telemetry-chart-axis-gap);
   margin-top: 12px;
 }
 
 .telemetry-chart-frame[data-has-right-axis="true"] {
-  grid-template-columns: 54px minmax(0, 1fr) 54px;
+  grid-template-columns: var(--telemetry-chart-axis-width) minmax(0, 1fr) var(--telemetry-chart-axis-width);
 }
 
 .telemetry-chart-plot {
@@ -1624,9 +1657,10 @@ input[type="checkbox"] {
 }
 
 .telemetry-chart-inline .telemetry-chart-frame {
-  grid-template-columns: 42px minmax(0, 1fr);
+  --telemetry-chart-axis-gap: 4px;
+  --telemetry-chart-axis-width: 30px;
   grid-template-rows: 68px 14px;
-  gap: 4px 6px;
+  gap: 4px var(--telemetry-chart-axis-gap);
   margin-top: 0;
 }
 
@@ -1649,7 +1683,7 @@ input[type="checkbox"] {
 }
 
 .telemetry-chart-inline .telemetry-chart-axis-x {
-  min-height: 14px;
+  min-height: 12px;
 }
 
 .telemetry-chart-inline .telemetry-chart-axis-x-tick {
@@ -1659,51 +1693,6 @@ input[type="checkbox"] {
 .telemetry-chart-inline .telemetry-chart-line {
   stroke: var(--accent);
   stroke-width: 1.8;
-}
-
-.telemetry-secondary-grid,
-.settings-group-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.telemetry-secondary-group {
-  position: relative;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background:
-    linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.012)),
-    var(--bg);
-  overflow: visible;
-}
-
-.telemetry-secondary-group-title {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.telemetry-secondary-group-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.telemetry-secondary-group-title svg {
-  color: var(--fg-subtle);
-}
-
-.telemetry-secondary-list {
-  margin: 0;
 }
 
 .telemetry-secondary-row {
@@ -1718,12 +1707,8 @@ input[type="checkbox"] {
 
 .telemetry-secondary-row-with-chart {
   align-items: start;
-  gap: 6px 10px;
-  padding-bottom: 10px;
-}
-
-.telemetry-secondary-row + .telemetry-secondary-row {
-  border-top: 1px solid var(--border);
+  gap: 10px;
+  padding-bottom: 8px;
 }
 
 .telemetry-secondary-row dt {
@@ -2239,8 +2224,7 @@ input[type="checkbox"] {
 
   .form-grid,
   .firmware-grid,
-  .telemetry-secondary-grid,
-  .settings-group-grid,
+  .grouped-panel-grid,
   .safety-checklist-items {
     grid-template-columns: 1fr 1fr;
   }
@@ -2313,8 +2297,7 @@ input[type="checkbox"] {
   .form-grid,
   .firmware-grid,
   .logo-grid,
-  .telemetry-secondary-grid,
-  .settings-group-grid,
+  .grouped-panel-grid,
   .safety-checklist-items {
     grid-template-columns: 1fr;
   }

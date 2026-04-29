@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Bluetooth, Check, CircleHelp, Clock3, Gauge, Monitor, Save, Thermometer, Zap, type LucideIcon } from "lucide-react";
+import { GroupedPanel } from "@/components/shared";
 import type { BleSettingDraft, BleSnapshot } from "@/lib/types";
 
 type TelemetrySample = {
@@ -509,15 +510,11 @@ function SecondaryTelemetry({
   tempUnit: TempUnit;
 }) {
   return (
-    <div className="telemetry-secondary-grid">
+    <div className="grouped-panel-grid">
       {groups.map(({ icon: Icon, items, title }) => (
-        <div className="telemetry-secondary-group" key={title}>
-          <div className="telemetry-secondary-group-title">
-            <span className="telemetry-secondary-group-name">
-              <Icon size={14} />
-              <span>{title}</span>
-            </span>
-            {title === "Thermal" ? (
+        <GroupedPanel
+          actions={
+            title === "Thermal" ? (
               <div className="segmented telemetry-unit-toggle" role="radiogroup" aria-label="Telemetry temperature units">
                 {(["C", "F"] as const).map((unit) => (
                   <button
@@ -533,15 +530,20 @@ function SecondaryTelemetry({
                   </button>
                 ))}
               </div>
-            ) : null}
-          </div>
-          <dl className="telemetry-secondary-list">
+            ) : null
+          }
+          className="telemetry-secondary-group"
+          icon={Icon}
+          key={title}
+          title={title}
+        >
+          <dl className="grouped-panel-list">
             {items.map((item) => {
               const value = telemetry?.[item.key];
               const chartItem = item.graphClass ? chartItemsByKey.get(item.key) : undefined;
               const helpId = `telemetry-help-${item.key}`;
               return (
-                <div className={`telemetry-secondary-row${chartItem ? " telemetry-secondary-row-with-chart" : ""}`} key={item.key}>
+                <div className={`grouped-panel-row telemetry-secondary-row${chartItem ? " telemetry-secondary-row-with-chart" : ""}`} key={item.key}>
                   <dt>
                     <span>{item.label}</span>
                     <span className="tooltip-anchor telemetry-field-help">
@@ -570,7 +572,7 @@ function SecondaryTelemetry({
               );
             })}
           </dl>
-        </div>
+        </GroupedPanel>
       ))}
     </div>
   );
@@ -722,20 +724,14 @@ export function BleSettingsPanel({
         </div>
       ) : null}
 
-      <div className="settings-group-grid">
+      <div className="grouped-panel-grid">
         {groupedDrafts.map(({ icon: Icon, settings, title }) => (
-          <div className="telemetry-secondary-group settings-group" key={title}>
-            <div className="telemetry-secondary-group-title">
-              <span className="telemetry-secondary-group-name">
-                <Icon size={14} />
-                <span>{title}</span>
-              </span>
-            </div>
-            <dl className="telemetry-secondary-list settings-list">
+          <GroupedPanel className="telemetry-secondary-group" icon={Icon} key={title} title={title}>
+            <dl className="grouped-panel-list">
               {settings.map((setting) => {
                 const helpId = `setting-help-${setting.id}`;
                 return (
-                  <div className="telemetry-secondary-row settings-row" data-dirty={setting.dirty ? "true" : "false"} key={setting.id}>
+                  <div className="grouped-panel-row telemetry-secondary-row settings-row" data-dirty={setting.dirty ? "true" : "false"} key={setting.id}>
                     <dt>
                       <span>{setting.name}</span>
                       <span className="tooltip-anchor telemetry-field-help">
@@ -760,7 +756,7 @@ export function BleSettingsPanel({
                 );
               })}
             </dl>
-          </div>
+          </GroupedPanel>
         ))}
       </div>
 

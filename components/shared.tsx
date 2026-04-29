@@ -1,5 +1,5 @@
 import { ShieldCheck, Plug } from "lucide-react";
-import type { ElementType } from "react";
+import type { ElementType, ReactNode } from "react";
 
 const safetyItems = [
   "Flash mode is active.",
@@ -7,26 +7,51 @@ const safetyItems = [
   "USB power will stay connected during write and verify."
 ];
 
+export function GroupedPanel({
+  actions,
+  children,
+  className,
+  icon: Icon,
+  iconSize = 14,
+  title
+}: {
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  icon: ElementType;
+  iconSize?: number;
+  title: string;
+}) {
+  return (
+    <div className={["grouped-panel", className].filter(Boolean).join(" ")}>
+      <div className="grouped-panel-heading">
+        <span className="grouped-panel-title">
+          <Icon size={iconSize} />
+          <span>{title}</span>
+        </span>
+        {actions}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function SafetyChecklist({
   children,
   disabled,
   onChange,
   values
 }: {
-  children?: React.ReactNode;
+  children?: ReactNode;
   disabled: boolean;
   onChange(value: boolean[]): void;
   values: boolean[];
 }) {
   return (
-    <div className="safety-checklist">
-      <div className="safety-checklist-heading">
-        <ShieldCheck size={13} />
-        Safety
-      </div>
-      <div className="safety-checklist-items">
+    <GroupedPanel icon={ShieldCheck} iconSize={13} title="Safety">
+      <div className="grouped-panel-list safety-checklist-items">
         {safetyItems.map((copy, index) => (
-          <label className="safety-item" key={copy}>
+          <label className="grouped-panel-row safety-item" key={copy}>
             <input
               checked={values[index]}
               disabled={disabled}
@@ -40,7 +65,7 @@ export function SafetyChecklist({
         ))}
         {children}
       </div>
-    </div>
+    </GroupedPanel>
   );
 }
 
