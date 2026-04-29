@@ -82,8 +82,18 @@ function makeMockBleSnapshot(): BleSnapshot {
     telemetry: {
       tipTempC: 31,
       setPointC: 320,
-      dcInputMv: 20000,
-      estimatedWatts: 42
+      handleTempC: 280,
+      dcInputMv: 200,
+      powerLevel: 0,
+      powerSource: 1,
+      tipResistance: 62,
+      uptimeSeconds: 1280,
+      lastMovementSeconds: 80,
+      maxTempC: 450,
+      rawTip: 1840,
+      hallSensor: 0,
+      operatingMode: 0,
+      estimatedWatts: 420
     },
     settings: KNOWN_BLE_SETTINGS.map((setting) => ({ ...setting }))
   };
@@ -869,8 +879,18 @@ export function AppShell() {
         const telemetry = {
           tipTempC: Math.round(190 + Math.sin(seconds / 2.7) * 46 + Math.sin(seconds / 0.9) * 7),
           setPointC: 320,
-          dcInputMv: Math.round(19950 + Math.sin(seconds / 3.1) * 320),
-          estimatedWatts: Math.max(0, Math.round(34 + Math.sin(seconds / 1.6) * 19))
+          handleTempC: Math.round(300 + Math.sin(seconds / 5.5) * 30),
+          dcInputMv: Math.round(199 + Math.sin(seconds / 3.1) * 3),
+          powerLevel: Math.max(0, Math.round(54 + Math.sin(seconds / 1.6) * 30)),
+          powerSource: 1,
+          tipResistance: 62,
+          uptimeSeconds: Math.round(1280 + seconds * 10),
+          lastMovementSeconds: Math.round((seconds % 18) * 10 + 10),
+          maxTempC: 450,
+          rawTip: Math.round(1840 + Math.sin(seconds / 1.9) * 180),
+          hallSensor: Math.max(0, Math.round(6 + Math.sin(seconds / 2.2) * 6)),
+          operatingMode: seconds % 24 > 18 ? 1 : 0,
+          estimatedWatts: Math.max(0, Math.round(340 + Math.sin(seconds / 1.6) * 190))
         };
         setBleSnapshot((snapshot) => (snapshot ? { ...snapshot, telemetry: { ...snapshot.telemetry, ...telemetry } } : snapshot));
         appendBleTelemetry(telemetry);

@@ -21,8 +21,8 @@ export const KNOWN_BLE_SETTINGS: BleSetting[] = [
     id: 15, name: "Temperature units", value: 0, min: 0, max: 1, writable: true,
     description: "Display scale used for all temperatures",
     options: [
-      { value: 0, label: "C" },
-      { value: 1, label: "F" }
+      { value: 0, label: "°C" },
+      { value: 1, label: "°F" }
     ]
   },
   { id: 24, name: "Power limit", value: 65, min: 0, max: 140, writable: true, unit: "W", description: "Maximum power the iron will draw" },
