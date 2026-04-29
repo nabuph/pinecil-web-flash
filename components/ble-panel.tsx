@@ -198,7 +198,7 @@ function makeSecondaryTelemetryGroups(unit: TempUnit): SecondaryTelemetryGroup[]
         {
           key: "hallSensor",
           label: "Hall effect",
-          description: "Absolute raw magnetic-field sensor strength. This is a unitless sensor count, not a calibrated magnetic unit.",
+          description: "Optional Hall effect sensor reading. This is a unitless raw magnetic-field count; irons without the user-installed sensor may report 0 raw, which can also mean no nearby magnet.",
           format: (value) => `${value} raw`
         },
         { key: "operatingMode", label: "Operating mode", description: operatingModeSummary, format: (value) => formatEnum(operatingModeLabels, "Unknown mode", value) }
