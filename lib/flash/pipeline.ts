@@ -1,4 +1,5 @@
 import { validateInstallFileName } from "@/lib/firmware/validation";
+import { validateLogoDfuFile } from "@/lib/logo/validation";
 import type { FlashInput, FlashProgress, FlashResult, FlashTarget, FlasherBackend, InstallKind } from "@/lib/types";
 import { sha256Hex } from "@/lib/utils/hash";
 
@@ -18,6 +19,9 @@ export async function prepareInstall(target: FlashTarget, selection: InstallSele
   const warnings = validateInstallFileName(selection.fileName, target.model, selection.kind, selection.language);
   if (warnings.length) {
     throw new Error(warnings.join(" "));
+  }
+  if (selection.kind === "bootLogo") {
+    validateLogoDfuFile(selection.bytes, target.model);
   }
 
   return {

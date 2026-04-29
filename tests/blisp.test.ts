@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildLogoDfu,
+  LOGO_ADDRESSES,
+  LOGO_HEIGHT,
+  LOGO_WIDTH
+} from "@/lib/logo/generator";
+import {
   buildPinecilV2BootHeader,
   BL70X_HANDSHAKE_BURST_BYTES,
   encodeBlispCommand,
@@ -33,6 +39,21 @@ describe("BLISP helpers", () => {
     // Native blisp identifies a Pinecil V2 .bin as needing a boot struct, but
     // the browser path leaves the installed boot header at 0x0000 untouched.
     expect(parseBlispFirmware(input)).toMatchObject({ address: 0x2000, needsBootHeader: false });
+  });
+
+  it("parses Pinecil V2 boot-logo DFUs to the model-specific logo offset", () => {
+    const input: FlashInput = {
+      model: "v2",
+      kind: "bootLogo",
+      fileName: "pinecil-v2-logo.dfu",
+      bytes: buildLogoDfu("v2", new Uint8Array(LOGO_WIDTH * LOGO_HEIGHT))
+    };
+
+    expect(parseBlispFirmware(input)).toMatchObject({
+      address: LOGO_ADDRESSES.v2,
+      payload: expect.any(Uint8Array),
+      needsBootHeader: false
+    });
   });
 
   it("builds the BLISP BL70x boot header template", () => {

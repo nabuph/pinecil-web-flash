@@ -1,4 +1,4 @@
-import { parseDfuSeTargets } from "@/lib/protocol/dfu";
+import { validateLogoDfuFile } from "@/lib/logo/validation";
 import {
   flashWriteChunkSize,
   findIronOsVersionInFlash,
@@ -19,7 +19,6 @@ type WebSerial = NonNullable<Navigator["serial"]>;
 const PINECIL_V2_SERIAL_FILTERS: SerialPortFilterLike[] = [
   { usbVendorId: 0x1a86, usbProductId: 0x55d4 }
 ];
-const BL70X_FLASH_MAP_ADDR = 0x23000000;
 const PINECIL_V2_FIRMWARE_OFFSET = 0x2000;
 const BL70X_FLASH_SECTOR_SIZE = 4096;
 const BL70X_ERASE_TIME_PER_SECTOR_MS = 300;
@@ -161,13 +160,10 @@ function concatBytes(parts: Bytes[]): Uint8Array {
 
 export function parseBlispFirmware(input: FlashInput): { payload: Uint8Array; address: number; needsBootHeader: boolean } {
   if (input.kind === "bootLogo") {
-    const targets = parseDfuSeTargets(input.bytes);
-    const first = targets[0];
-    if (!first) throw new Error("Boot-logo DFU did not contain any payload.");
-    const normalizedAddress = first.address >= BL70X_FLASH_MAP_ADDR ? first.address - BL70X_FLASH_MAP_ADDR : first.address;
+    const logo = validateLogoDfuFile(input.bytes, input.model);
     return {
-      payload: first.bytes,
-      address: normalizedAddress,
+      payload: logo.bytes,
+      address: logo.address,
       needsBootHeader: false
     };
   }
