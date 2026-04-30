@@ -70,7 +70,7 @@ function formatWattsX10(value: number) {
 }
 
 function formatOhmsX10(value: number) {
-  return `${(value / 10).toFixed(1)} Ω`;
+  return `${(value / 10).toFixed(1)} ohm`;
 }
 
 function formatDuration(totalSeconds: number) {
@@ -108,7 +108,7 @@ const operatingModeLabels: Record<number, string> = {
   4: "Settings",
   5: "Debug",
   6: "Profile",
-  7: "Temp adjust",
+  7: "Temperature adjust",
   8: "USB-PD debug",
   9: "Thermal runaway",
   10: "Startup logo",
@@ -119,7 +119,7 @@ const operatingModeLabels: Record<number, string> = {
 };
 
 const powerSourceSummary = "Where the iron believes input power is coming from: DC input, QC / fallback, PD VBUS, or USB-PD.";
-const operatingModeSummary = "The current IronOS screen or workflow state, such as Home, Soldering, Sleeping, Settings, Debug, Profile, Temp adjust, USB-PD debug, Thermal runaway, Startup logo, CJC calibration, Startup warnings, Ready, or Hibernating.";
+const operatingModeSummary = "The current IronOS screen or workflow state, such as Home, Soldering, Sleeping, Settings, Debug, Profile, Temperature adjust, USB-PD debug, Thermal runaway, Startup logo, CJC calibration, Startup warnings, Ready, or Hibernating.";
 
 const settingsGroupDefinitions: SettingsGroupDefinition[] = [
   { title: "Thermal", icon: Thermometer, ids: [0, 1, 2, 15] },
@@ -132,7 +132,7 @@ function makeChartTelemetryItems(unit: TempUnit): TelemetryItem[] {
   return [
     {
       key: "tipTempC",
-      label: "Tip temp.",
+      label: "Tip temperature",
       graphClass: "tip",
       unit: `°${unit}`,
       format: (value) => formatTemp(value, unit),
@@ -162,9 +162,9 @@ function makeSecondaryTelemetryGroups(unit: TempUnit): SecondaryTelemetryGroup[]
       title: "Thermal",
       icon: Thermometer,
       items: [
-        { key: "tipTempC", label: "Tip temp.", description: "The current calculated soldering tip temperature.", graphClass: "tip", format: (value) => formatTemp(value, unit) },
+        { key: "tipTempC", label: "Tip temperature", description: "The current calculated soldering tip temperature.", graphClass: "tip", format: (value) => formatTemp(value, unit) },
         { key: "setPointC", label: "Set point", description: "The target soldering temperature currently configured on the iron.", format: (value) => formatTemp(value, unit) },
-        { key: "handleTempC", label: "Handle temp.", description: "The handle thermistor temperature. IronOS reports this as tenths of a degree Celsius.", format: (value) => formatTempX10(value, unit) },
+        { key: "handleTempC", label: "Handle temperature", description: "The handle thermistor temperature. IronOS reports this as tenths of a degree Celsius.", format: (value) => formatTempX10(value, unit) },
         {
           key: "rawTip",
           label: "Tip signal",
