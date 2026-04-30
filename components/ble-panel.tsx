@@ -163,7 +163,6 @@ function makeSecondaryTelemetryGroups(unit: TempUnit): SecondaryTelemetryGroup[]
       icon: Thermometer,
       items: [
         { key: "tipTempC", label: "Tip temperature", description: "The current calculated soldering tip temperature.", graphClass: "tip", format: (value) => formatTemp(value, unit) },
-        { key: "setPointC", label: "Set point", description: "The target soldering temperature currently configured on the iron.", format: (value) => formatTemp(value, unit) },
         { key: "handleTempC", label: "Handle temperature", description: "The handle thermistor temperature. IronOS reports this as tenths of a degree Celsius.", format: (value) => formatTempX10(value, unit) },
         {
           key: "rawTip",
