@@ -2,7 +2,7 @@
 
 A browser-based flashing and configuration tool for the [Pine64 Pinecil](https://pine64.org/devices/pinecil/) soldering iron — firmware updates, boot-logo customisation, and live Bluetooth telemetry/settings, all from a single web page.
 
-**Live site:** https://natephillips3.github.io/pinecil-web-flash/
+**Live site:** https://nabuph.github.io/pinecil-web-flash/
 
 ## Why a browser tool?
 
