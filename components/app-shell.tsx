@@ -55,6 +55,33 @@ function isUserCancellation(err: unknown): boolean {
   return name === "NotFoundError" || name === "AbortError";
 }
 
+const FADE_HOLD_MS = 220;
+
+function useFadeOnKeyChange(key: string): boolean {
+  const readyRef = useRef(false);
+  const previousKeyRef = useRef(key);
+  const [fadeKey, setFadeKey] = useState<string | null>(null);
+  const shouldStartFade = readyRef.current && previousKeyRef.current !== key;
+
+  useEffect(() => {
+    if (!readyRef.current) {
+      readyRef.current = true;
+      previousKeyRef.current = key;
+      return;
+    }
+    if (previousKeyRef.current === key) return;
+
+    previousKeyRef.current = key;
+    setFadeKey(key);
+    const timeout = window.setTimeout(() => {
+      setFadeKey((current) => (current === key ? null : current));
+    }, FADE_HOLD_MS);
+    return () => window.clearTimeout(timeout);
+  }, [key]);
+
+  return shouldStartFade || fadeKey === key;
+}
+
 function makeBleDrafts(snapshot: BleSnapshot): BleSettingDraft[] {
   return snapshot.settings.map((setting) => ({
     ...setting,
@@ -234,7 +261,6 @@ export function AppShell() {
   const backendRef = useRef<FlasherBackend | undefined>(undefined);
   const bleRef = useRef<PinecilBleClient | undefined>(undefined);
   const logoBuildIdRef = useRef(0);
-  const motionReadyRef = useRef(false);
   const preserveDoneOnDisconnectRef = useRef(false);
   const skipNextSelectionResetRef = useRef(false);
 
@@ -349,10 +375,6 @@ export function AppShell() {
     setBrowserCapable(webUsb && webSerial && webBluetooth);
     addLog("INFO", "Browser capability check completed.");
   }, [addLog]);
-
-  useEffect(() => {
-    motionReadyRef.current = true;
-  }, []);
 
   // Load releases. The static deploy bundles a same-origin releases.json (see
   // scripts/bundle-releases.mjs) because release-assets.githubusercontent.com
@@ -1118,7 +1140,19 @@ export function AppShell() {
   const workspaceStateKey = showSplash
     ? `splash-${connected ? "unavailable" : "disconnected"}-${needsUsbForMode ? "usb" : needsBluetoothForMode ? "ble" : "any"}`
     : `workspace-${connectionKind ?? "none"}-${mode ?? "none"}`;
-  const fadeStateClass = motionReadyRef.current ? " fade-in" : "";
+  const sidebarDeviceFadeKey = [
+    mobileDisplayName,
+    sidebarFirmwareVersion ?? "",
+    sidebarBootRomVersion ?? "",
+    connected ? (target?.bootloader ? "flash" : "normal") : "disconnected",
+    modeHelp
+  ].join("|");
+  const mobileConnectionFadeKey = `${mobileDisplayName}|${mobileModeLine ?? ""}`;
+  const fadeSidebarContent = useFadeOnKeyChange(sidebarDeviceFadeKey);
+  const fadeMobileContent = useFadeOnKeyChange(mobileConnectionFadeKey);
+  const fadeWorkspaceState = useFadeOnKeyChange(workspaceStateKey);
+  const mobileFadeStateClass = fadeMobileContent ? " fade-in" : "";
+  const workspaceFadeStateClass = fadeWorkspaceState ? " fade-in" : "";
 
   return (
     <div className="app-layout">
@@ -1128,7 +1162,7 @@ export function AppShell() {
         busy={busy}
         firmwareVersion={sidebarFirmwareVersion}
         bootRomVersion={sidebarBootRomVersion}
-        fadeContent={motionReadyRef.current}
+        fadeContent={fadeSidebarContent}
         modeAvailability={modeAvailability}
         modeHelp={modeHelp}
         mode={mode}
@@ -1146,9 +1180,9 @@ export function AppShell() {
               <span className="sidebar-connection-indicator" aria-hidden="true">
                 <span className="sidebar-connection-dot" />
               </span>
-              <span className={motionReadyRef.current ? "fade-in" : undefined} key={mobileDisplayName}>{mobileDisplayName}</span>
+              <span className={fadeMobileContent ? "fade-in" : undefined} key={mobileDisplayName}>{mobileDisplayName}</span>
             </div>
-            {mobileModeLine ? <div className={`mobile-device-meta${fadeStateClass}`} key={mobileModeLine}>{mobileModeLine}</div> : null}
+            {mobileModeLine ? <div className={`mobile-device-meta${mobileFadeStateClass}`} key={mobileModeLine}>{mobileModeLine}</div> : null}
           </div>
           <div className="mobile-connection-actions">
             {connected ? (
@@ -1180,7 +1214,7 @@ export function AppShell() {
             </section>
           ) : null}
 
-          <div className={`workspace-state${fadeStateClass}`} data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
+          <div className={`workspace-state${workspaceFadeStateClass}`} data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
             {showSplash ? (
               <WorkspaceSplash
                 busy={busy}

@@ -15,6 +15,19 @@ describe("AppShell connection actions", () => {
     });
   });
 
+  it("does not fade the initial splash after startup effects settle", async () => {
+    await act(async () => {
+      render(<AppShell />);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector(".workspace-state")).not.toHaveClass("fade-in");
+    expect(screen.getAllByText("No device connected")[0]).not.toHaveClass("fade-in");
+  });
+
   it("connects the USB demo target from the splash controls", async () => {
     await act(async () => {
       render(<AppShell />);
@@ -25,6 +38,7 @@ describe("AppShell connection actions", () => {
     });
 
     expect(screen.getAllByText("Pinecil V2 connected via USB")).toHaveLength(2);
+    expect(document.querySelector(".workspace-state")).toHaveClass("fade-in");
     // Sidebar shows "Flash mode" on its own line; mobile header collapses
     // the meta into a single slash-separated string. Both should be present.
     expect(screen.getByText("Flash mode")).toBeInTheDocument();
