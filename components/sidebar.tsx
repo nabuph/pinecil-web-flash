@@ -30,7 +30,6 @@ const footerLinks = [
 
 export function Sidebar({
   bluetoothLabel,
-  bluetoothDeviceName,
   busy,
   firmwareVersion,
   bootRomVersion,
@@ -44,7 +43,6 @@ export function Sidebar({
   theme
 }: {
   bluetoothLabel: string;
-  bluetoothDeviceName?: string;
   busy: boolean;
   // IronOS firmware version reported either by Bluetooth (running IronOS)
   // or by reading flash via the eflash_loader during BLISP connect. For the

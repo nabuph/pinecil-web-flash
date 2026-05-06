@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, ChevronDown, Trash2, XCircle } from "lucide-react";
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { FlashPhase } from "@/lib/types";
 
 export type LogLine = { time: string; level: "INFO" | "WARN" | "ERROR" | "OK"; message: string };

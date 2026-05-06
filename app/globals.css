@@ -2015,17 +2015,6 @@ input[type="checkbox"] {
 }
 
 /* ── Toast ────────────────────────────────────────────────────────────────── */
-.toast-stack {
-  width: calc(100% - 48px);
-  max-width: 800px;
-  margin: 0 auto 12px;
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: flex-end;
-  gap: 8px;
-  pointer-events: none;
-}
-
 .toast {
   display: flex;
   align-items: flex-start;
@@ -2059,23 +2048,6 @@ input[type="checkbox"] {
 .toast-icon[data-level="ERROR"] { color: var(--danger); }
 
 .toast-msg { flex: 1; color: var(--fg); }
-
-.toast-dismiss {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  color: var(--fg-subtle);
-  cursor: pointer;
-  padding: 0;
-  border-radius: var(--r-xs);
-  min-height: unset;
-  transition: color var(--dur-base) linear;
-}
-.toast-dismiss:hover { color: var(--fg); background: transparent; border: none; }
 
 /* ── Spinner ──────────────────────────────────────────────────────────────── */
 .spin {

@@ -4,7 +4,6 @@ export const BLE_BULK_SERVICE = "9eae1000-9d0d-48c5-aa55-33e27f9bc533";
 export const BLE_LIVE_SERVICE = "d85ef000-168e-4a71-aa55-33e27f9bc533";
 export const BLE_SETTINGS_SERVICE = "f6d80000-5a10-4eba-aa55-33e27f9bc533";
 export const BLE_SAVE_CHARACTERISTIC = "f6d7ffff-5a10-4eba-aa55-33e27f9bc533";
-export const BLE_RESET_CHARACTERISTIC = "f6d7fffe-5a10-4eba-aa55-33e27f9bc533";
 
 const BULK_CHARACTERISTICS = {
   live: "9eae1001-9d0d-48c5-aa55-33e27f9bc533",

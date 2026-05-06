@@ -12,10 +12,6 @@ function entriesFrom(bytes: Uint8Array): ZipEntries {
   });
 }
 
-export function listZipEntries(bytes: Uint8Array): string[] {
-  return Object.keys(entriesFrom(bytes)).sort();
-}
-
 export function extractFirmwareFromZip(bytes: Uint8Array, model: PinecilModel, language: string): Uint8Array {
   const entries = entriesFrom(bytes);
   const wanted = firmwareFileName(model, language).toLowerCase();

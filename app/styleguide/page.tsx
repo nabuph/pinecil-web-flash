@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, Info, Loader2, Moon, Monitor, Plug, Sun, Upload, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, Loader2, Moon, Monitor, Plug, Sun, Upload, XCircle, Zap } from "lucide-react";
 import { Pine64Logo } from "@/components/pine64-logo";
 import { StatusChip, InfoRows, SafetyChecklist, EmptyConnectNotice } from "@/components/shared";
 

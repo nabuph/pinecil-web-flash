@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_LANGUAGES, compatibleFirmwareReleases, findFirmwareAsset, findMetadataAsset, firmwareFileName, normalizeReleases, sampleReleases } from "@/lib/catalog/releases";
 import { KNOWN_BLE_SETTINGS, PinecilBleClient } from "@/lib/ble/pinecil-ble";
 import { prepareInstall, flashPrepared } from "@/lib/flash/pipeline";
@@ -9,11 +9,9 @@ import { generateLogoFromImage } from "@/lib/logo/generator";
 import { WebSerialBlispFlasher } from "@/lib/protocol/blisp";
 import { buildDfuSeFile, parseDfuSuffix, WebUsbDfuFlasher } from "@/lib/protocol/dfu";
 import type {
-  BleSetting,
   BleSettingDraft,
   BleSnapshot,
   FirmwareRelease,
-  FlashInput,
   FlashPhase,
   FlashProgress,
   FlashTarget,
@@ -24,7 +22,7 @@ import type {
   PinecilModel,
   ReleaseChannel
 } from "@/lib/types";
-import { formatBytes, nowStamp, sha256Hex } from "@/lib/utils/hash";
+import { formatBytes, nowStamp } from "@/lib/utils/hash";
 import { AlertTriangle, Bluetooth, Loader2, Play, Unplug, Usb } from "lucide-react";
 import { Sidebar, type Mode, type ModeAvailability, type ThemePreference } from "@/components/sidebar";
 import { ActivityLog, type LogLine } from "@/components/activity-log";
@@ -204,7 +202,6 @@ export function AppShell() {
   const [target, setTarget] = useState<FlashTarget>();
   const [phase, setPhase] = useState<FlashPhase>("connect");
   const [progress, setProgress] = useState(0);
-  const [progressMessage, setProgressMessage] = useState("Waiting for device access.");
   const [logs, setLogs] = useState<LogLine[]>(initialLogs);
   const [activityOpen, setActivityOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -311,7 +308,6 @@ export function AppShell() {
   );
 
   const metadataAsset = useMemo(() => findMetadataAsset(selectedRelease), [selectedRelease]);
-  const selectedLanguage = languages.find((item) => item.code === language);
   const safetyReady = confirmations.every(Boolean);
   // A release is "bundled" when its firmware asset is served from the same
   // origin as the app (i.e. picked up from public/firmware/ via the bundler).
@@ -463,11 +459,6 @@ export function AppShell() {
     const bluetoothActive = Boolean(bleRef.current) || bleDemo;
     setProgress(0);
     setPhase(target ? "select" : bluetoothActive ? "detect" : "connect");
-    setProgressMessage(
-      target
-        ? "Ready to flash. Validation will run automatically."
-        : bluetoothActive ? "Bluetooth telemetry and settings are ready." : "Waiting for device access."
-    );
   }, [bleDemo, language, mode, selectedReleaseTag, target?.connectedAt]);
 
   const clearBluetoothState = useCallback(() => {
@@ -490,7 +481,6 @@ export function AppShell() {
       setMode(undefined);
       setPhase("connect");
       setProgress(0);
-      setProgressMessage("Waiting for device access.");
     };
     return () => {
       PinecilBleClient.onDisconnect = () => undefined;
@@ -519,7 +509,6 @@ export function AppShell() {
       const showTraceLog = process.env.NODE_ENV !== "production";
       setPhase(event.phase);
       setProgress(next);
-      setProgressMessage(event.message);
       if (event.log !== false && (!event.trace || showTraceLog)) {
         addLog(
           event.level === "error" ? "ERROR"
@@ -548,7 +537,6 @@ export function AppShell() {
     setTarget(demoTarget);
     setMode("firmware");
     setPhase("detect");
-    setProgressMessage(`${demoTarget.label} connected.`);
     addLog("OK", `${demoTarget.label} connected via USB.`);
   }, [addLog, clearBluetoothState, clearUsbState]);
 
@@ -566,7 +554,6 @@ export function AppShell() {
       setTarget(detected);
       setMode("firmware");
       setPhase("detect");
-      setProgressMessage(`${detected.label} connected.`);
       addLog("OK", `${detected.label} connected via USB.`);
       return detected;
     };
@@ -604,7 +591,6 @@ export function AppShell() {
     setMode(undefined);
     setPhase("connect");
     setProgress(0);
-    setProgressMessage("Waiting for device access.");
     addLog("INFO", "Device disconnected from the app.");
   }, [addLog, clearBluetoothState, clearUsbState]);
 
@@ -660,7 +646,6 @@ export function AppShell() {
     try {
       setPhase("validate");
       setProgress(0);
-      setProgressMessage("Preparing, validating, and hashing file.");
       const prepared = kind === "firmware" ? await prepareFirmwareForTarget() : await prepareLogoForTarget();
       addLog("OK", `${prepared.fileName} validated (${formatBytes(prepared.bytes.length)}, SHA-256 ${prepared.sha256?.slice(0, 16)}...).`);
       preserveDoneOnDisconnectRef.current = true;
@@ -675,7 +660,6 @@ export function AppShell() {
       }
       setPhase("done");
       setProgress(100);
-      setProgressMessage(result.verifySummary ?? result.message);
       addLog("OK", result.message);
       window.setTimeout(() => {
         preserveDoneOnDisconnectRef.current = false;
@@ -685,7 +669,6 @@ export function AppShell() {
       preserveDoneOnDisconnectRef.current = false;
       setPhase("fail");
       setProgress(100);
-      setProgressMessage(message);
       addLog("ERROR", message);
     } finally {
       setBusy(false);
@@ -705,7 +688,7 @@ export function AppShell() {
       if (buildId !== logoBuildIdRef.current) return;
       setGeneratedLogo(generated);
       setLogoDfuFile(undefined);
-      const prepared = await prepareInstall(target, { kind: "bootLogo", fileName: generated.fileName, bytes: generated.bytes });
+      await prepareInstall(target, { kind: "bootLogo", fileName: generated.fileName, bytes: generated.bytes });
       if (buildId !== logoBuildIdRef.current) return;
       if (!silent) addLog("OK", `Generated ${generated.fileName} from ${file.name}.`);
     } catch (err) {
@@ -738,7 +721,7 @@ export function AppShell() {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const suffix = parseDfuSuffix(bytes);
       if (!suffix.crcValid) throw new Error("DFU suffix CRC does not match.");
-      const prepared = await prepareInstall(target, { kind: "bootLogo", fileName: file.name, bytes });
+      await prepareInstall(target, { kind: "bootLogo", fileName: file.name, bytes });
       setLogoDfuFile(file);
       setLogoImageFile(undefined);
       setLogoPan({ x: 0, y: 0, zoom: 1 });
@@ -760,7 +743,7 @@ export function AppShell() {
       const generated = await generateLogoFromImage({
         model: target.model, threshold: logoThreshold, invert: logoInvert, erase: true, animationMode: "static"
       });
-      const prepared = await prepareInstall(target, { kind: "bootLogo", fileName: generated.fileName, bytes: generated.bytes });
+      await prepareInstall(target, { kind: "bootLogo", fileName: generated.fileName, bytes: generated.bytes });
       setGeneratedLogo(generated);
       setLogoDfuFile(undefined);
       setLogoImageFile(undefined);
@@ -801,7 +784,6 @@ export function AppShell() {
       setMode("ble");
       setPhase("detect");
       setProgress(0);
-      setProgressMessage(`${name} connected via Bluetooth.`);
       addLog("OK", `Connected to ${name} via Bluetooth.`);
       if (snapshot.readOnly) addLog("WARN", "Bluetooth reports read-only mode; settings writes are disabled.");
       return snapshot;
@@ -815,13 +797,10 @@ export function AppShell() {
     setBusy(true);
     setPhase("connect");
     setProgress(0);
-    setProgressMessage("Waiting for USB device selection.");
     try {
       await connectUsb();
     } catch (err) {
-      if (isUserCancellation(err)) {
-        setProgressMessage("Waiting for device access.");
-      } else {
+      if (!isUserCancellation(err)) {
         addLog("ERROR", err instanceof Error ? err.message : "USB connection failed.");
       }
     } finally {
@@ -833,7 +812,6 @@ export function AppShell() {
     setBusy(true);
     setPhase("detect");
     setProgress(0);
-    setProgressMessage("Connecting over Bluetooth.");
     try {
       await connectBluetooth();
     } catch (err) {
@@ -841,7 +819,6 @@ export function AppShell() {
       setBleSnapshot(undefined);
       if (isUserCancellation(err)) {
         setPhase(target ? "select" : "connect");
-        setProgressMessage(target ? "Ready to flash. Validation will run automatically." : "Waiting for device access.");
       } else {
         addLog("ERROR", err instanceof Error ? err.message : "Bluetooth connection failed.");
       }
@@ -866,7 +843,6 @@ export function AppShell() {
     setMode("ble");
     setPhase("detect");
     setProgress(0);
-    setProgressMessage(`${snapshot.deviceName} connected via Bluetooth.`);
     addLog("OK", `${snapshot.deviceName} connected via Bluetooth.`);
   }, [addLog, appendBleTelemetry, clearUsbState]);
 
@@ -938,12 +914,8 @@ export function AppShell() {
 
   const applyBleDrafts = useCallback(async () => {
     const dirtyDrafts = bleDrafts.filter((draft) => draft.dirty);
-    const startMessage = dirtyDrafts.length
-      ? `Applying ${dirtyDrafts.length} Bluetooth setting change${dirtyDrafts.length === 1 ? "" : "s"} to runtime settings.`
-      : "Checking Bluetooth settings for staged changes.";
     setPhase("flash");
     setProgress(dirtyDrafts.length ? 20 : 80);
-    setProgressMessage(startMessage);
 
     if (bleDemo) {
       setBleDrafts((drafts) => drafts.map((d) => ({ ...d, value: d.draftValue, originalValue: d.draftValue, dirty: false })));
@@ -963,7 +935,6 @@ export function AppShell() {
         : "No Bluetooth setting changes to apply.";
       setPhase("done");
       setProgress(100);
-      setProgressMessage(message);
       addLog("OK", message);
       return;
     }
@@ -971,7 +942,6 @@ export function AppShell() {
       const message = "Connect over Bluetooth before applying settings.";
       setPhase("fail");
       setProgress(100);
-      setProgressMessage(message);
       addLog("WARN", message);
       return;
     }
@@ -989,13 +959,11 @@ export function AppShell() {
         : "No Bluetooth setting changes to apply.";
       setPhase("done");
       setProgress(100);
-      setProgressMessage(message);
       addLog("OK", message);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Bluetooth setting write failed.";
       setPhase("fail");
       setProgress(100);
-      setProgressMessage(message);
       addLog("ERROR", message);
     } finally {
       setBusy(false);
@@ -1005,13 +973,11 @@ export function AppShell() {
   const saveBle = useCallback(async () => {
     setPhase("flash");
     setProgress(35);
-    setProgressMessage("Saving Bluetooth settings to device flash.");
 
     if (bleDemo) {
       const message = "Demo Bluetooth settings saved to flash.";
       setPhase("done");
       setProgress(100);
-      setProgressMessage(message);
       addLog("OK", message);
       return;
     }
@@ -1019,7 +985,6 @@ export function AppShell() {
       const message = "Connect over Bluetooth before saving settings to flash.";
       setPhase("fail");
       setProgress(100);
-      setProgressMessage(message);
       addLog("WARN", message);
       return;
     }
@@ -1029,13 +994,11 @@ export function AppShell() {
       const message = "Bluetooth settings saved to device flash.";
       setPhase("done");
       setProgress(100);
-      setProgressMessage(message);
       addLog("OK", message);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to save Bluetooth settings.";
       setPhase("fail");
       setProgress(100);
-      setProgressMessage(message);
       addLog("ERROR", message);
     } finally {
       setBusy(false);
@@ -1126,7 +1089,6 @@ export function AppShell() {
     <div className="app-layout">
       <Sidebar
         bluetoothLabel={bluetoothLabel}
-        bluetoothDeviceName={bleSnapshot?.deviceName}
         busy={busy}
         firmwareVersion={sidebarFirmwareVersion}
         bootRomVersion={sidebarBootRomVersion}
