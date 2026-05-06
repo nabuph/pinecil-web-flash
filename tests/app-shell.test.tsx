@@ -13,19 +13,21 @@ describe("AppShell connection actions", () => {
         removeEventListener: vi.fn()
       }))
     });
+    document.body.classList.remove("fades-ready");
   });
 
-  it("does not fade the initial splash after startup effects settle", async () => {
+  it("adds .fades-ready to body after mount so subsequent remounts can fade in", async () => {
+    expect(document.body).not.toHaveClass("fades-ready");
+
     await act(async () => {
       render(<AppShell />);
     });
 
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(document.querySelector(".workspace-state")).not.toHaveClass("fade-in");
-    expect(screen.getAllByText("No device connected")[0]).not.toHaveClass("fade-in");
+    // The mount effect tags the body so CSS @starting-style fires for
+    // any .fade-in element inserted after the initial paint. The
+    // selector is `.fades-ready .fade-in`, so elements rendered during
+    // the very first commit don't match and don't fade.
+    expect(document.body).toHaveClass("fades-ready");
   });
 
   it("connects the USB demo target from the splash controls", async () => {
@@ -38,7 +40,6 @@ describe("AppShell connection actions", () => {
     });
 
     expect(screen.getAllByText("Pinecil V2 connected via USB")).toHaveLength(2);
-    expect(document.querySelector(".workspace-state")).toHaveClass("fade-in");
     // Sidebar shows "Flash mode" on its own line; mobile header collapses
     // the meta into a single slash-separated string. Both should be present.
     expect(screen.getByText("Flash mode")).toBeInTheDocument();

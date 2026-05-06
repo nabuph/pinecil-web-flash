@@ -55,33 +55,6 @@ function isUserCancellation(err: unknown): boolean {
   return name === "NotFoundError" || name === "AbortError";
 }
 
-const FADE_HOLD_MS = 220;
-
-function useFadeOnKeyChange(key: string): boolean {
-  const readyRef = useRef(false);
-  const previousKeyRef = useRef(key);
-  const [fadeKey, setFadeKey] = useState<string | null>(null);
-  const shouldStartFade = readyRef.current && previousKeyRef.current !== key;
-
-  useEffect(() => {
-    if (!readyRef.current) {
-      readyRef.current = true;
-      previousKeyRef.current = key;
-      return;
-    }
-    if (previousKeyRef.current === key) return;
-
-    previousKeyRef.current = key;
-    setFadeKey(key);
-    const timeout = window.setTimeout(() => {
-      setFadeKey((current) => (current === key ? null : current));
-    }, FADE_HOLD_MS);
-    return () => window.clearTimeout(timeout);
-  }, [key]);
-
-  return shouldStartFade || fadeKey === key;
-}
-
 function makeBleDrafts(snapshot: BleSnapshot): BleSettingDraft[] {
   return snapshot.settings.map((setting) => ({
     ...setting,
@@ -266,6 +239,14 @@ export function AppShell() {
 
   const addLog = useCallback((level: LogLine["level"], message: string) => {
     setLogs((current) => [...current, { time: nowStamp(), level, message }].slice(-90));
+  }, []);
+
+  // Gate fade-in transitions so they only apply to elements inserted after
+  // the initial paint. CSS @starting-style fires when an element is added
+  // to the DOM; scoping it under .fades-ready means the very first render
+  // doesn't fade. After mount, any future key-driven remount fades in.
+  useEffect(() => {
+    document.body.classList.add("fades-ready");
   }, []);
 
   // Forward BLISP-internal progress and soft errors (e.g. eflash_loader load
@@ -1140,19 +1121,6 @@ export function AppShell() {
   const workspaceStateKey = showSplash
     ? `splash-${connected ? "unavailable" : "disconnected"}-${needsUsbForMode ? "usb" : needsBluetoothForMode ? "ble" : "any"}`
     : `workspace-${connectionKind ?? "none"}-${mode ?? "none"}`;
-  const sidebarDeviceFadeKey = [
-    mobileDisplayName,
-    sidebarFirmwareVersion ?? "",
-    sidebarBootRomVersion ?? "",
-    connected ? (target?.bootloader ? "flash" : "normal") : "disconnected",
-    modeHelp
-  ].join("|");
-  const mobileConnectionFadeKey = `${mobileDisplayName}|${mobileModeLine ?? ""}`;
-  const fadeSidebarContent = useFadeOnKeyChange(sidebarDeviceFadeKey);
-  const fadeMobileContent = useFadeOnKeyChange(mobileConnectionFadeKey);
-  const fadeWorkspaceState = useFadeOnKeyChange(workspaceStateKey);
-  const mobileFadeStateClass = fadeMobileContent ? " fade-in" : "";
-  const workspaceFadeStateClass = fadeWorkspaceState ? " fade-in" : "";
 
   return (
     <div className="app-layout">
@@ -1162,7 +1130,6 @@ export function AppShell() {
         busy={busy}
         firmwareVersion={sidebarFirmwareVersion}
         bootRomVersion={sidebarBootRomVersion}
-        fadeContent={fadeSidebarContent}
         modeAvailability={modeAvailability}
         modeHelp={modeHelp}
         mode={mode}
@@ -1180,9 +1147,9 @@ export function AppShell() {
               <span className="sidebar-connection-indicator" aria-hidden="true">
                 <span className="sidebar-connection-dot" />
               </span>
-              <span className={fadeMobileContent ? "fade-in" : undefined} key={mobileDisplayName}>{mobileDisplayName}</span>
+              <span className="fade-in" key={mobileDisplayName}>{mobileDisplayName}</span>
             </div>
-            {mobileModeLine ? <div className={`mobile-device-meta${mobileFadeStateClass}`} key={mobileModeLine}>{mobileModeLine}</div> : null}
+            {mobileModeLine ? <div className="mobile-device-meta fade-in" key={mobileModeLine}>{mobileModeLine}</div> : null}
           </div>
           <div className="mobile-connection-actions">
             {connected ? (
@@ -1214,7 +1181,7 @@ export function AppShell() {
             </section>
           ) : null}
 
-          <div className={`workspace-state${workspaceFadeStateClass}`} data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
+          <div className="workspace-state fade-in" data-state={showSplash ? "splash" : "workspace"} key={workspaceStateKey}>
             {showSplash ? (
               <WorkspaceSplash
                 busy={busy}

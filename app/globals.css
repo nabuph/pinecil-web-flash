@@ -406,12 +406,12 @@ a {
 }
 
 .fade-in {
-  animation: fade-in var(--dur-base) linear both;
+  opacity: 1;
+  transition: opacity var(--dur-base) linear;
 }
 
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+@starting-style {
+  .fades-ready .fade-in { opacity: 0; }
 }
 
 .sidebar-mode-help {
@@ -2052,7 +2052,9 @@ input[type="checkbox"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-in,
+  .fade-in {
+    transition: none;
+  }
   .chip,
   .toast,
   .spin,
