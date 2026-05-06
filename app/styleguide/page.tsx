@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, CheckCircle2, Info, Loader2, Moon, Monitor, Plug, Sun, Upload, XCircle, Zap } from "lucide-react";
 import { Pine64Logo } from "@/components/pine64-logo";
-import { IronSchematic } from "@/components/iron-schematic";
 import { StatusChip, InfoRows, SafetyChecklist, EmptyConnectNotice } from "@/components/shared";
 
 type ThemePreference = "system" | "light" | "dark";
@@ -468,27 +467,6 @@ export default function StyleGuidePage() {
           </div>
         </Section>
 
-        {/* ── Iron Schematic ─────────────────────────────────────────────── */}
-        <Section title="Iron Schematic" description="Inline SVG representation of the Pinecil in three connection states.">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, maxWidth: 680 }}>
-            {[
-              { label: "Disconnected", connected: false, flashing: false },
-              { label: "Connected (V2, USB)", connected: true, flashing: false, transport: "webserial-blisp" as const, model: "v2" as const },
-              { label: "Flashing", connected: true, flashing: true, transport: "webserial-blisp" as const, model: "v2" as const }
-            ].map(({ label, connected, flashing, transport, model }) => (
-              <div key={label} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "16px 12px 12px", background: "var(--bg-raised)", display: "flex", flexDirection: "column", gap: 12 }}>
-                <IronSchematic connected={connected} flashing={flashing} model={model} transport={transport} />
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg)" }}>{label}</div>
-                  <div style={{ fontSize: 11, color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", marginTop: 2 }}>
-                    {connected ? (flashing ? "tip pulses" : "tip + dot teal") : "all muted"}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-
         {/* ── Toast ──────────────────────────────────────────────────────── */}
         <Section title="Toast Notifications" description="Transient alerts surfaced from OK / WARN / ERROR log events. Auto-dismiss 4 s; ERROR persists.">
           <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 400 }}>
@@ -516,7 +494,7 @@ export default function StyleGuidePage() {
                 ↓ Activity
               </span>
               <div style={{ flex: 1, height: 3, borderRadius: 9999, background: "var(--border-raised)", overflow: "hidden" }}>
-                <div style={{ width: "65%", height: "100%", background: "var(--accent)", borderRadius: 9999, transition: "width 200ms" }} />
+                <div style={{ width: "65%", height: "100%", background: "var(--accent)", borderRadius: 9999, transition: "width var(--dur-slow) linear" }} />
               </div>
               <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--fg-muted)" }}>65%</span>
               <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>Writing</span>
