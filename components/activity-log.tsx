@@ -97,8 +97,8 @@ export function ActivityLog({
         </div>
       </div>
 
-      {open ? (
-        <div className="activity-expanded">
+      <div className="activity-expanded" aria-hidden={!open} data-open={open ? "true" : "false"}>
+        <div className="activity-expanded-inner">
           <div className="log-list" aria-live="polite" ref={logListRef}>
             {logs.map((line, index) => (
               <p key={`${line.time}-${index}`}>
@@ -109,7 +109,7 @@ export function ActivityLog({
             ))}
           </div>
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }

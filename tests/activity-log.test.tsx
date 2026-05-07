@@ -38,6 +38,19 @@ describe("ActivityLog", () => {
     expect(screen.getByRole("button", { name: "Clear log" })).toBeInTheDocument();
   });
 
+  it("keeps the expanded panel mounted so CSS can animate the open state", () => {
+    const { container } = renderActivity();
+    const expanded = container.querySelector(".activity-expanded");
+
+    expect(expanded).toHaveAttribute("data-open", "false");
+    expect(expanded).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Activity Waiting for device" }));
+
+    expect(expanded).toHaveAttribute("data-open", "true");
+    expect(expanded).toHaveAttribute("aria-hidden", "false");
+  });
+
   it("expands directly to log lines without metadata rows", () => {
     renderActivity();
 

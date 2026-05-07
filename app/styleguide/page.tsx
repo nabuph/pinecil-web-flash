@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Info, Loader2, Moon, Monitor, Plug, Sun, Upload, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, Info, Loader2, Plug, Upload, Zap } from "lucide-react";
+import { ActivityLog, type LogLine } from "@/components/activity-log";
 import { Pine64Logo } from "@/components/pine64-logo";
-import { StatusChip, InfoRows, SafetyChecklist, EmptyConnectNotice } from "@/components/shared";
-
-type ThemePreference = "system" | "light" | "dark";
+import { footerLinks, ThemeSwitch, type ThemePreference } from "@/components/sidebar";
+import { InfoRows, SafetyChecklist, EmptyConnectNotice } from "@/components/shared";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -108,6 +108,14 @@ function CardBody({ children, style }: { children: React.ReactNode; style?: Reac
   return <div style={{ padding: "16px 20px", ...style }}>{children}</div>;
 }
 
+const sampleActivityLogs: LogLine[] = [
+  { time: "14:32:01", level: "INFO", message: "Writing sector 14 of 22." },
+  { time: "14:31:58", level: "OK", message: "Pinecilv2_EN.bin validated (256 KB)." },
+  { time: "14:31:55", level: "INFO", message: "Preparing, validating, and hashing file." },
+  { time: "14:31:50", level: "OK", message: "Loaded 32 language entries for V2." },
+  { time: "14:31:48", level: "WARN", message: "Using local sample catalog." }
+];
+
 /* ── Static mock pixel grid ───────────────────────────────────────────────── */
 function MockLogoPixels() {
   const pixels = new Uint8Array(96 * 16);
@@ -139,6 +147,8 @@ function MockLogoPixels() {
 export default function StyleGuidePage() {
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [safetyValues, setSafetyValues] = useState([false, true, false]);
+  const [activityOpen, setActivityOpen] = useState(true);
+  const [activityLogs, setActivityLogs] = useState(sampleActivityLogs);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("pinecil-theme");
@@ -180,24 +190,7 @@ export default function StyleGuidePage() {
           <span style={{ fontSize: 13, fontWeight: 600 }}>Pinecil Web Flash</span>
           <span style={{ fontSize: 13, color: "var(--fg-subtle)", marginLeft: 4 }}>/ Style Guide</span>
         </div>
-        <div className="theme-switch" aria-label="Select display theme">
-          {([
-            { value: "system", icon: Monitor, label: "System" },
-            { value: "light",  icon: Sun,     label: "Light"  },
-            { value: "dark",   icon: Moon,    label: "Dark"   }
-          ] as const).map(({ value, icon: Icon, label }) => (
-            <button
-              key={value}
-              aria-label={label}
-              aria-pressed={theme === value}
-              onClick={() => setTheme(value)}
-              title={label}
-              type="button"
-            >
-              <Icon size={13} />
-            </button>
-          ))}
-        </div>
+        <ThemeSwitch onTheme={setTheme} theme={theme} />
       </header>
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "40px 32px 80px", display: "flex", flexDirection: "column", gap: 56 }}>
@@ -255,9 +248,9 @@ export default function StyleGuidePage() {
             <Swatch token="--border-raised" label="border-raised" hex="#2e2e2e / #d4d4d8" />
           </Row>
 
-          <Row label="Accent — Pine64 Teal">
-            <Swatch token="--accent"     label="accent"     hex="#14b8a6 / #0f766e" />
-            <Swatch token="--accent-dim" label="accent-dim" hex="rgba teal 14%" />
+          <Row label="Accent - PINE64 Blue">
+            <Swatch token="--accent"     label="accent"     hex="#52accd / #2969b1" />
+            <Swatch token="--accent-dim" label="accent-dim" hex="rgba blue 14% / 8%" />
           </Row>
 
           <Row label="Status">
@@ -337,20 +330,24 @@ export default function StyleGuidePage() {
           </Row>
         </Section>
 
-        {/* ── Chips ──────────────────────────────────────────────────────── */}
-        <Section title="Status Chips" description="Pill badges used for connection state and browser capability indicators.">
-          <Row label="Tones">
-            <StatusChip label="Connected"  tone="green" />
-            <StatusChip label="Flash mode" tone="amber" />
-            <StatusChip label="Error"      tone="red"   />
-            <StatusChip label="No device"  tone="gray"  />
-          </Row>
-          <Row label="Connection examples">
-            <StatusChip label="USB connected" tone="green" />
-            <StatusChip label="Bluetooth connected" tone="green" />
-            <StatusChip label="Normal mode" tone="green" />
-            <StatusChip label="USB disconnected" tone="gray" />
-          </Row>
+        {/* ── Connection Indicator ───────────────────────────────────────── */}
+        <Section title="Connection Indicator" description="Pulsing sidebar dot used for device connection state.">
+          <Card style={{ maxWidth: 420 }}>
+            <CardBody style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="sidebar-device-name" data-connected="false" style={{ padding: 0 }}>
+                <span className="sidebar-connection-indicator" aria-hidden="true">
+                  <span className="sidebar-connection-dot" />
+                </span>
+                <span>No device connected</span>
+              </div>
+              <div className="sidebar-device-name" data-connected="true" style={{ padding: 0 }}>
+                <span className="sidebar-connection-indicator" aria-hidden="true">
+                  <span className="sidebar-connection-dot" />
+                </span>
+                <span>Pinecil V2 connected via USB</span>
+              </div>
+            </CardBody>
+          </Card>
         </Section>
 
         {/* ── Form Controls ──────────────────────────────────────────────── */}
@@ -467,66 +464,46 @@ export default function StyleGuidePage() {
           </div>
         </Section>
 
-        {/* ── Toast ──────────────────────────────────────────────────────── */}
-        <Section title="Toast Notifications" description="Transient alerts surfaced from OK / WARN / ERROR log events. Auto-dismiss 4 s; ERROR persists.">
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 400 }}>
-            <div className="toast" data-level="OK" style={{ position: "static", animation: "none" }}>
-              <span className="toast-icon" data-level="OK"><CheckCircle2 size={15} /></span>
-              <span className="toast-msg">v2.23 Pinecilv2_EN.bin validated (256 KB, SHA-256 a3f8c1d2…).</span>
-            </div>
-            <div className="toast" data-level="WARN" style={{ position: "static", animation: "none" }}>
-              <span className="toast-icon" data-level="WARN"><AlertTriangle size={15} /></span>
-              <span className="toast-msg">Release fetch failed; using local sample catalog.</span>
-            </div>
-            <div className="toast" data-level="ERROR" style={{ position: "static", animation: "none" }}>
-              <span className="toast-icon" data-level="ERROR"><XCircle size={15} /></span>
-              <span className="toast-msg">DFU suffix CRC does not match. Check the file and try again.</span>
-            </div>
+        {/* ── Sidebar Footer ─────────────────────────────────────────────── */}
+        <Section title="Sidebar Footer" description="Project links and the shared display theme switch used at the bottom of the sidebar.">
+          <div
+            className="sidebar-footer"
+            style={{
+              width: "var(--sidebar-w)",
+              height: "auto",
+              minHeight: "var(--footer-panel-h)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-lg)",
+              background: "var(--bg)"
+            }}
+          >
+            <p className="sidebar-footer-tagline">Open. Friendly. Community Driven.</p>
+            <p className="sidebar-footer-disclaimer">
+              This project is not official, administered by, or endorsed by PINE64.
+            </p>
+            <nav className="sidebar-footer-links" aria-label="Styleguide project links">
+              {footerLinks.map((link) => (
+                <a href={link.href} key={link.href} rel="noreferrer" target="_blank">
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+            <ThemeSwitch onTheme={setTheme} theme={theme} />
           </div>
         </Section>
 
         {/* ── Activity Log ───────────────────────────────────────────────── */}
-        <Section title="Activity Log" description="Collapsible footer bar with progress track and expandable log list.">
-          <Card>
-            {/* Bar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 16px", height: 44, borderBottom: "1px solid var(--border)" }}>
-              <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--fg-subtle)", display: "flex", alignItems: "center", gap: 6 }}>
-                ↓ Activity
-              </span>
-              <div style={{ flex: 1, height: 3, borderRadius: 9999, background: "var(--border-raised)", overflow: "hidden" }}>
-                <div style={{ width: "65%", height: "100%", background: "var(--accent)", borderRadius: 9999, transition: "width var(--dur-slow) linear" }} />
-              </div>
-              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--fg-muted)" }}>65%</span>
-              <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>Writing</span>
-              <button className="btn btn-ghost btn-sm" type="button">Clear</button>
-            </div>
-            {/* Expanded log */}
-            <div style={{ display: "grid", gridTemplateColumns: "280px 1fr" }}>
-              <div style={{ padding: "14px 16px", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
-                {[["Target", "Pinecil V2 demo"], ["File", "Pinecilv2_EN.bin"], ["Status", "65% · Writing sector 14/22"]].map(([k, v]) => (
-                  <div key={k} style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: 8, fontSize: 12 }}>
-                    <dt style={{ color: "var(--fg-subtle)" }}>{k}</dt>
-                    <dd style={{ margin: 0, fontFamily: "var(--font-mono)", color: "var(--fg-muted)", fontSize: 11, wordBreak: "break-all" }}>{v}</dd>
-                  </div>
-                ))}
-              </div>
-              <div style={{ padding: 10, fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
-                {[
-                  { time: "14:32:01", level: "INFO", msg: "Writing sector 14 of 22…" },
-                  { time: "14:31:58", level: "OK",   msg: "Pinecilv2_EN.bin validated (256 KB)." },
-                  { time: "14:31:55", level: "INFO", msg: "Preparing, validating, and hashing file." },
-                  { time: "14:31:50", level: "OK",   msg: "Loaded 32 language entries for V2." },
-                  { time: "14:31:48", level: "WARN", msg: "Using local sample catalog." }
-                ].map(({ time, level, msg }) => (
-                  <p key={time} style={{ display: "grid", gridTemplateColumns: "60px 46px 1fr", gap: 6, margin: "0 0 6px", alignItems: "baseline", lineHeight: 1.6 }}>
-                    <span style={{ color: "var(--fg-subtle)" }}>{time}</span>
-                    <b className="log-level" data-level={level}>{level}</b>
-                    <span style={{ color: "var(--fg-muted)", wordBreak: "break-word" }}>{msg}</span>
-                  </p>
-                ))}
-              </div>
-            </div>
-          </Card>
+        <Section title="Activity Log" description="Shared collapsible activity component with current open-state animation and progress states.">
+          <div className="activity-panel-outer" style={{ padding: 0 }}>
+            <ActivityLog
+              logs={activityLogs}
+              onClear={() => setActivityLogs([])}
+              onOpenChange={setActivityOpen}
+              open={activityOpen}
+              phase="flash"
+              progress={65}
+            />
+          </div>
         </Section>
 
         {/* ── Drop Zone ──────────────────────────────────────────────────── */}

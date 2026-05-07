@@ -22,10 +22,10 @@ const themeItems: Array<{ value: ThemePreference; label: string; icon: ElementTy
   { value: "dark",   label: "Dark",   icon: Moon    }
 ];
 
-const footerLinks = [
-  { label: "Official Pinecil", href: "https://pine64.org/devices/pinecil/" },
-  { label: "IronOS firmware", href: "https://github.com/Ralim/IronOS" },
-  { label: "PINE64 community", href: "https://pine64.org/community/" }
+export const footerLinks = [
+  { label: "PINE64", href: "https://pine64.org/devices/pinecil/" },
+  { label: "IronOS", href: "https://github.com/Ralim/IronOS" },
+  { label: "Github", href: "https://github.com/nabuph/pinecil-web-flash" }
 ];
 
 export function Sidebar({

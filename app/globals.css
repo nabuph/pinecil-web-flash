@@ -59,6 +59,7 @@
   --sidebar-w: 256px;
   --footer-panel-h: 210px;
   --activity-bar-h: 44px;
+  --bottom-dock-inset: 24px;
 }
 
 /* ── Tokens: light ────────────────────────────────────────────────────────── */
@@ -391,20 +392,6 @@ a {
   to { opacity: 1; transform: none; }
 }
 
-.chip {
-  transition:
-    background var(--dur-base) linear,
-    border-color var(--dur-base) linear,
-    color var(--dur-base) linear,
-    opacity var(--dur-base) linear;
-  animation: chip-settle var(--dur-slow) var(--ease) both;
-}
-
-@keyframes chip-settle {
-  from { opacity: 0.72; transform: translateY(1px); }
-  to { opacity: 1; transform: none; }
-}
-
 .fade-in {
   opacity: 1;
   transition: opacity var(--dur-base) linear;
@@ -434,10 +421,11 @@ a {
 .sidebar-footer {
   flex-shrink: 0;
   height: var(--footer-panel-h);
-  padding: 14px 16px 16px;
+  padding: 14px 16px var(--bottom-dock-inset);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  justify-content: flex-end;
 }
 
 .sidebar-footer-tagline {
@@ -474,7 +462,7 @@ a {
 }
 
 .sidebar-footer .theme-switch {
-  margin-top: auto;
+  margin-top: 0;
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
@@ -550,7 +538,7 @@ a {
 /* ── Activity Log ─────────────────────────────────────────────────────────── */
 .activity-panel-outer {
   flex-shrink: 0;
-  padding: 0 24px 24px;
+  padding: 0 var(--bottom-dock-inset) var(--bottom-dock-inset);
 }
 
 .activity-panel {
@@ -722,8 +710,38 @@ a {
 }
 
 .activity-expanded {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid transparent;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    max-height var(--dur-slow) var(--ease),
+    opacity var(--dur-base) linear,
+    transform var(--dur-slow) var(--ease),
+    border-color var(--dur-base) linear,
+    visibility 0s linear var(--dur-slow);
+  visibility: hidden;
+}
+
+.activity-expanded[data-open="true"] {
+  border-top-color: var(--border);
+  max-height: var(--footer-panel-h);
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition:
+    max-height var(--dur-slow) var(--ease),
+    opacity var(--dur-base) linear,
+    transform var(--dur-slow) var(--ease),
+    border-color var(--dur-base) linear;
+  visibility: visible;
+}
+
+.activity-expanded-inner {
   height: var(--footer-panel-h);
+  min-height: 0;
 }
 
 .log-list {
@@ -970,53 +988,6 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-}
-
-/* ── Status chip ─────────────────────────────────────────────────────────── */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: var(--r-full);
-  border: 1px solid var(--border-raised);
-  background: var(--bg-raised);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--fg-muted);
-  white-space: nowrap;
-}
-
-.chip::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.5;
-}
-
-.chip[data-tone="green"] {
-  background: var(--success-dim);
-  border-color: color-mix(in srgb, var(--success) 25%, transparent);
-  color: var(--success);
-}
-
-.chip[data-tone="amber"] {
-  background: var(--warning-dim);
-  border-color: color-mix(in srgb, var(--warning) 25%, transparent);
-  color: var(--warning);
-}
-
-.chip[data-tone="red"] {
-  background: var(--danger-dim);
-  border-color: color-mix(in srgb, var(--danger) 25%, transparent);
-  color: var(--danger);
-}
-
-.chip[data-tone="gray"] {
-  color: var(--fg-subtle);
 }
 
 /* ── Info rows ────────────────────────────────────────────────────────────── */
@@ -1999,8 +1970,6 @@ input[type="checkbox"] {
   .fade-in {
     transition: none;
   }
-  .chip,
-  .toast,
   .spin {
     animation: none;
   }
@@ -2014,41 +1983,6 @@ input[type="checkbox"] {
   }
 }
 
-/* ── Toast ────────────────────────────────────────────────────────────────── */
-.toast {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 280px;
-  max-width: 400px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-raised);
-  border-radius: var(--r-lg);
-  background: var(--bg-overlay);
-  box-shadow: var(--shadow-lg);
-  pointer-events: all;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1.4;
-  animation: toast-in var(--dur-slow) var(--ease) both;
-}
-
-@keyframes toast-in {
-  from { opacity: 0; transform: translateX(12px) scale(0.96); }
-  to   { opacity: 1; transform: none; }
-}
-
-.toast[data-level="OK"]    { border-left: 3px solid var(--success); }
-.toast[data-level="WARN"]  { border-left: 3px solid var(--warning); }
-.toast[data-level="ERROR"] { border-left: 3px solid var(--danger); }
-
-.toast-icon { flex-shrink: 0; margin-top: 1px; }
-.toast-icon[data-level="OK"]    { color: var(--success); }
-.toast-icon[data-level="WARN"]  { color: var(--warning); }
-.toast-icon[data-level="ERROR"] { color: var(--danger); }
-
-.toast-msg { flex: 1; color: var(--fg); }
-
 /* ── Spinner ──────────────────────────────────────────────────────────────── */
 .spin {
   animation: spin 700ms linear infinite;
@@ -2057,6 +1991,10 @@ input[type="checkbox"] {
 
 /* ── Responsive: collapse sidebar ────────────────────────────────────────── */
 @media (max-width: 880px) {
+  :root {
+    --bottom-dock-inset: 16px;
+  }
+
   .app-layout {
     flex-direction: column;
     width: 100%;
@@ -2157,8 +2095,6 @@ input[type="checkbox"] {
     padding: 16px;
   }
 
-  .activity-panel-outer { padding: 0 16px 16px; }
-
   .form-grid,
   .firmware-grid,
   .grouped-panel-grid {
@@ -2168,7 +2104,6 @@ input[type="checkbox"] {
 
 @media (max-width: 580px) {
   .main-content { padding: 16px; }
-  .activity-panel-outer { padding: 0 16px 16px; }
 
   /* Collapse the sidebar mode nav to icons-only on narrow screens so all
      four modes stay visible without overflow. */

@@ -91,22 +91,6 @@ export function InfoRows({ rows }: { rows: Array<[string, string]> }) {
   );
 }
 
-export function StatusChip({
-  label,
-  title,
-  tone
-}: {
-  label: string;
-  title?: string;
-  tone: "green" | "amber" | "red" | "gray";
-}) {
-  return (
-    <span className="chip" data-tone={tone} title={title}>
-      {label}
-    </span>
-  );
-}
-
 export function FileInput({
   accept,
   disabled,
