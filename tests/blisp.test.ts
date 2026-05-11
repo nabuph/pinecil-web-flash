@@ -107,7 +107,10 @@ describe("BLISP helpers", () => {
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x04, 0x00]),
-      new Uint8Array([1, 2, 3, 4])
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([0xff, 0xff, 0xff, 0xff])
     ];
     const port = {
       open: vi.fn(async () => undefined),
@@ -139,7 +142,8 @@ describe("BLISP helpers", () => {
       model: "v2",
       transport: "webserial-blisp",
       label: "Pinecil V2 BL70x flash mode",
-      portName: "USB 1a86:55d4"
+      portName: "USB 1a86:55d4",
+      bootRomVersion: "1.2.3.4"
     });
     // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then blisp's
     // baud-derived 'U' burst. Then command 0x10 once OK is seen.
@@ -148,6 +152,108 @@ describe("BLISP helpers", () => {
     expect(writes[1]).toHaveLength(BL70X_HANDSHAKE_BURST_BYTES);
     expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
     expect(writes[2]).toEqual(encodeBlispCommand(0x10));
+  });
+
+  it("does not display the eflash_loader sentinel as a Boot ROM version", async () => {
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([0xff, 0xff, 0xff, 0xff]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([0xff, 0xff, 0xff, 0xff])
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>()
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { requestPort: vi.fn(async () => port) }
+    });
+
+    const target = await new WebSerialBlispFlasher().connect();
+
+    expect(target.bootRomVersion).toBeUndefined();
+  });
+
+  it("keeps displaying a real Boot ROM version after reconnecting to the same port in eflash_loader", async () => {
+    const sessions = [
+      [
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x04, 0x00]),
+        new Uint8Array([9, 8, 7, 6]),
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x04, 0x00]),
+        new Uint8Array([0xff, 0xff, 0xff, 0xff])
+      ],
+      [
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x04, 0x00]),
+        new Uint8Array([0xff, 0xff, 0xff, 0xff]),
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x04, 0x00]),
+        new Uint8Array([0xff, 0xff, 0xff, 0xff])
+      ]
+    ];
+    let activeChunks: Uint8Array[] = [];
+    let activeReadable: ReadableStream<Uint8Array> | undefined;
+    let activeWritable: WritableStream<Uint8Array> | undefined;
+    const port = {
+      open: vi.fn(async () => {
+        const nextSession = sessions.shift();
+        if (!nextSession) throw new Error("No mock serial session configured.");
+        activeChunks = [...nextSession];
+        activeReadable = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const chunk = activeChunks.shift();
+            if (chunk) controller.enqueue(chunk);
+            else controller.close();
+          }
+        });
+        activeWritable = new WritableStream<Uint8Array>();
+      }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      get readable() {
+        return activeReadable;
+      },
+      get writable() {
+        return activeWritable;
+      }
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: {
+        getPorts: vi.fn(async () => [port]),
+        requestPort: vi.fn()
+      }
+    });
+
+    const first = new WebSerialBlispFlasher();
+    const firstTarget = await first.connect();
+    await first.close();
+
+    const secondTarget = await new WebSerialBlispFlasher().connect();
+
+    expect(firstTarget.bootRomVersion).toBe("9.8.7.6");
+    expect(secondTarget.bootRomVersion).toBe("9.8.7.6");
   });
 
   it("auto-selects a previously authorized Pinecil V2 serial port", async () => {

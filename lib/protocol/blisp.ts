@@ -147,6 +147,31 @@ function findOkInResponse(bytes: Uint8Array): number {
   return -1;
 }
 
+function isEflashLoaderBootInfoVersion(bytes: Uint8Array): boolean {
+  return bytes.length === 4 && bytes.every((byte) => byte === 0xff);
+}
+
+const bootRomVersionCache = new WeakMap<SerialPort, string>();
+
+function formatBl70xBootRomVersion(bootInfo: Uint8Array): string | undefined {
+  if (bootInfo.length < 4) return undefined;
+  const versionBytes = bootInfo.slice(0, 4);
+  if (isEflashLoaderBootInfoVersion(versionBytes)) {
+    // eflash_loader answers get_boot_info with ff.ff.ff.ff. That is a loader
+    // state sentinel, not a mask-ROM revision read from the chip.
+    return undefined;
+  }
+  return Array.from(versionBytes).join(".");
+}
+
+function cacheBootRomVersion(port: SerialPort | undefined, version: string): void {
+  if (port) bootRomVersionCache.set(port, version);
+}
+
+function cachedBootRomVersion(port: SerialPort | undefined): string | undefined {
+  return port ? bootRomVersionCache.get(port) : undefined;
+}
+
 function concatBytes(parts: Bytes[]): Uint8Array {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
   const out = new Uint8Array(total);
@@ -603,12 +628,22 @@ export class WebSerialBlispFlasher implements FlasherBackend {
           // First 4 bytes of the boot info payload are the BL70x ROM
           // version. Stored on the instance so connect() can put it on the
           // FlashTarget for the UI to display.
-          this.bootRomVersion = bootInfo.length >= 4
-            ? Array.from(bootInfo.slice(0, 4)).join(".")
-            : undefined;
+          const bootRomVersion = formatBl70xBootRomVersion(bootInfo);
+          const eflashLoaderActive = isEflashLoaderBootInfoVersion(bootInfo.slice(0, 4));
+          const displayBootRomVersion = bootRomVersion ?? (eflashLoaderActive ? cachedBootRomVersion(this.port) : undefined);
+          if (bootRomVersion) {
+            this.bootRomVersion = bootRomVersion;
+            cacheBootRomVersion(this.port, bootRomVersion);
+          } else if (displayBootRomVersion) {
+            this.bootRomVersion = displayBootRomVersion;
+          }
           onProgress?.({
             phase: "detect",
-            message: `Boot ROM ${this.bootRomVersion ?? "detected"}`,
+            message: displayBootRomVersion
+              ? `Boot ROM ${displayBootRomVersion}`
+              : eflashLoaderActive
+                ? "eflash_loader already active"
+                : "Boot ROM detected",
             current: 1,
             total: 1,
             trace: true
@@ -638,7 +673,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     if (!this.session) throw new Error("No BLISP serial session is connected.");
 
     // Match blisp_common_prepare_flash: first try get_boot_info to see what is
-    // currently answering. A boot ROM version of ff.ff.ff.ff means the RAM
+    // currently answering. A version field of ff.ff.ff.ff means the RAM
     // eflash_loader is already running; a normal version means we are still in
     // ROM and must load it before issuing flash erase/write commands.
     let inRomBootloader = this.bootloaderReady;
@@ -647,13 +682,19 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true, 500);
       const bootRomVersion = bootInfo.slice(0, 4);
       const alreadyInEflashLoader =
-        bootRomVersion.length === 4 && bootRomVersion.every((byte) => byte === 0xff);
+        isEflashLoaderBootInfoVersion(bootRomVersion);
       if (alreadyInEflashLoader) {
+        const previousBootRomVersion = cachedBootRomVersion(this.port);
+        if (previousBootRomVersion) this.bootRomVersion = previousBootRomVersion;
         this.eflashLoaderReady = true;
         this.bootloaderReady = true;
         return;
       }
-      if (bootRomVersion.length >= 4) this.bootRomVersion = Array.from(bootRomVersion).join(".");
+      const parsedBootRomVersion = formatBl70xBootRomVersion(bootInfo);
+      if (parsedBootRomVersion) {
+        this.bootRomVersion = parsedBootRomVersion;
+        cacheBootRomVersion(this.port, parsedBootRomVersion);
+      }
       this.bootloaderReady = true;
       inRomBootloader = true;
     } catch (err) {
