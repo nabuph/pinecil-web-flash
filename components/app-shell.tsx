@@ -53,6 +53,10 @@ function isUserCancellation(err: unknown): boolean {
   return name === "NotFoundError" || name === "AbortError";
 }
 
+function usbChooserClosedMessage() {
+  return "Chrome closed the USB device chooser without selecting a device. If no dialog appeared, check Chrome serial permissions, OS USB accessory prompts, and the USB cable or port, then try again.";
+}
+
 function makeBleDrafts(snapshot: BleSnapshot): BleSettingDraft[] {
   return snapshot.settings.map((setting) => ({
     ...setting,
@@ -542,6 +546,7 @@ export function AppShell() {
 
   const connectUsb = useCallback(async () => {
     if (!navigator.serial && !navigator.usb) throw new Error("This browser does not expose WebUSB or Web Serial.");
+    let chooserClosed = false;
 
     // Prompt order matters. Pinecil V2 (BL70x bootloader) shows up as a USB CDC
     // serial port and only Web Serial BLISP can talk to it. Pinecil V1 in DFU
@@ -566,7 +571,8 @@ export function AppShell() {
       } catch (err) {
         await blisp.close().catch(() => undefined);
         backendRef.current = undefined;
-        if (!isUserCancellation(err)) throw err;
+        if (isUserCancellation(err)) chooserClosed = true;
+        else throw err;
       }
     }
 
@@ -578,10 +584,12 @@ export function AppShell() {
       } catch (err) {
         await dfu.close().catch(() => undefined);
         backendRef.current = undefined;
-        if (!isUserCancellation(err)) throw err;
+        if (isUserCancellation(err)) chooserClosed = true;
+        else throw err;
       }
     }
 
+    if (chooserClosed) addLog("ERROR", usbChooserClosedMessage());
     return undefined;
   }, [addLog, clearBluetoothState]);
 

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/app-shell";
 
@@ -11,6 +11,18 @@ describe("AppShell connection actions", () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn()
       }))
+    });
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: undefined
+    });
+    Object.defineProperty(navigator, "usb", {
+      configurable: true,
+      value: undefined
+    });
+    Object.defineProperty(navigator, "bluetooth", {
+      configurable: true,
+      value: undefined
     });
     document.body.classList.remove("fades-ready");
   });
@@ -56,5 +68,29 @@ describe("AppShell connection actions", () => {
 
     expect(screen.getAllByText("Pinecil V2 connected via Bluetooth")).toHaveLength(2);
     expect(screen.getByText("Firmware v2.23-demo")).toBeInTheDocument();
+  });
+
+  it("logs when Chrome closes the USB chooser without a selected device", async () => {
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: {
+        getPorts: vi.fn(async () => []),
+        requestPort: vi.fn(async () => {
+          throw Object.assign(new Error("No port selected"), { name: "NotFoundError" });
+        })
+      }
+    });
+
+    await act(async () => {
+      render(<AppShell />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Connect USB" }).at(-1)!);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Chrome closed the USB device chooser/)).toBeInTheDocument();
+    });
   });
 });
