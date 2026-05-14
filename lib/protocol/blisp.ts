@@ -84,34 +84,36 @@ function isKnownPinecilV2SerialPort(port: SerialPort): boolean {
   );
 }
 
-async function selectPinecilV2SerialPort(serial: WebSerial): Promise<{ port: SerialPort; autoSelected: boolean }> {
+async function selectPinecilV2SerialPort(serial: WebSerial): Promise<SerialPort> {
   const authorizedPorts = typeof serial.getPorts === "function"
     ? await serial.getPorts().catch(() => [])
     : [];
   const matches = authorizedPorts.filter(isKnownPinecilV2SerialPort);
   if (matches.length === 1) {
-    return { port: matches[0], autoSelected: true };
-  }
-  if (matches.length === 0 && authorizedPorts.length === 1) {
     WebSerialBlispFlasher.onLog(
       "INFO",
-      "Using the only previously authorized USB serial port."
+      "Previously authorized Pinecil V2 USB serial port found; opening the picker so you can confirm it or choose another port."
     );
-    return { port: authorizedPorts[0], autoSelected: true };
-  }
-  if (matches.length > 1) {
+  } else if (matches.length > 1) {
     WebSerialBlispFlasher.onLog(
       "INFO",
       "Multiple previously authorized Pinecil V2 serial ports are available; opening the picker."
     );
+  } else if (authorizedPorts.length === 1) {
+    WebSerialBlispFlasher.onLog(
+      "INFO",
+      "Previously authorized USB serial port found; opening the picker so you can confirm it or choose another port."
+    );
+  } else if (authorizedPorts.length > 1) {
+    WebSerialBlispFlasher.onLog(
+      "INFO",
+      "Multiple previously authorized USB serial ports are available; opening the picker."
+    );
   }
-  return {
-    // Keep the manual picker broad: some OS/browser combinations expose the
-    // Pinecil's USB CDC bridge with a different PID than getInfo() reports
-    // after permission is granted.
-    port: await serial.requestPort(),
-    autoSelected: false
-  };
+  // Keep the manual picker broad: some OS/browser combinations expose the
+  // Pinecil's USB CDC bridge with a different PID than getInfo() reports
+  // after permission is granted.
+  return serial.requestPort();
 }
 
 export function eraseResponseTimeoutMs(byteLength: number): number {
@@ -412,11 +414,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
 
   async connect(): Promise<FlashTarget> {
     if (!navigator.serial) throw new Error("Web Serial is not available in this browser.");
-    const selection = await selectPinecilV2SerialPort(navigator.serial);
-    this.port = selection.port;
-    if (selection.autoSelected) {
-      WebSerialBlispFlasher.onLog("INFO", "Using previously authorized Pinecil V2 USB serial port.");
-    }
+    this.port = await selectPinecilV2SerialPort(navigator.serial);
     this.session = new SerialBlispSession(this.port);
     // Notify the app immediately when the cable is unplugged. Without this
     // the UI keeps showing "Connected" until the next operation fails.

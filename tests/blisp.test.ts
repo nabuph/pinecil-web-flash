@@ -18,6 +18,7 @@ import type { FlashInput } from "@/lib/types";
 describe("BLISP helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    WebSerialBlispFlasher.onLog = () => undefined;
     Object.defineProperty(navigator, "serial", {
       configurable: true,
       value: undefined
@@ -242,7 +243,7 @@ describe("BLISP helpers", () => {
       configurable: true,
       value: {
         getPorts: vi.fn(async () => [port]),
-        requestPort: vi.fn()
+        requestPort: vi.fn(async () => port)
       }
     });
 
@@ -256,14 +257,18 @@ describe("BLISP helpers", () => {
     expect(secondTarget.bootRomVersion).toBe("9.8.7.6");
   });
 
-  it("auto-selects a previously authorized Pinecil V2 serial port", async () => {
+  it("opens the picker when a Pinecil V2 serial port was previously authorized", async () => {
     const chunks = [
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x04, 0x00]),
       new Uint8Array([1, 2, 3, 4])
     ];
-    const port = {
+    const authorizedPort = {
+      open: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 })
+    };
+    const chosenPort = {
       open: vi.fn(async () => undefined),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -278,11 +283,13 @@ describe("BLISP helpers", () => {
       }),
       writable: new WritableStream<Uint8Array>()
     };
-    const requestPort = vi.fn();
+    const requestPort = vi.fn(async () => chosenPort);
+    const onLog = vi.fn();
+    WebSerialBlispFlasher.onLog = onLog;
     Object.defineProperty(navigator, "serial", {
       configurable: true,
       value: {
-        getPorts: vi.fn(async () => [port]),
+        getPorts: vi.fn(async () => [authorizedPort]),
         requestPort
       }
     });
@@ -290,23 +297,32 @@ describe("BLISP helpers", () => {
     const target = await new WebSerialBlispFlasher().connect();
 
     expect(target.transport).toBe("webserial-blisp");
-    expect(requestPort).not.toHaveBeenCalled();
-    expect(port.open).toHaveBeenCalledOnce();
+    expect(requestPort).toHaveBeenCalledOnce();
+    expect(authorizedPort.open).not.toHaveBeenCalled();
+    expect(chosenPort.open).toHaveBeenCalledOnce();
+    expect(onLog).toHaveBeenCalledWith(
+      "INFO",
+      "Previously authorized Pinecil V2 USB serial port found; opening the picker so you can confirm it or choose another port."
+    );
   });
 
-  it("auto-selects the only previously authorized serial port when USB IDs are hidden", async () => {
+  it("opens the picker instead of assuming the only previously authorized serial port is a Pinecil", async () => {
     const chunks = [
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x4f, 0x4b]),
       new Uint8Array([0x04, 0x00]),
       new Uint8Array([1, 2, 3, 4])
     ];
-    const port = {
+    const authorizedPort = {
+      open: vi.fn(async () => undefined),
+      getInfo: () => ({})
+    };
+    const chosenPort = {
       open: vi.fn(async () => undefined),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       close: vi.fn(async () => undefined),
-      getInfo: () => ({}),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
       readable: new ReadableStream<Uint8Array>({
         pull(controller) {
           const chunk = chunks.shift();
@@ -316,11 +332,13 @@ describe("BLISP helpers", () => {
       }),
       writable: new WritableStream<Uint8Array>()
     };
-    const requestPort = vi.fn();
+    const requestPort = vi.fn(async () => chosenPort);
+    const onLog = vi.fn();
+    WebSerialBlispFlasher.onLog = onLog;
     Object.defineProperty(navigator, "serial", {
       configurable: true,
       value: {
-        getPorts: vi.fn(async () => [port]),
+        getPorts: vi.fn(async () => [authorizedPort]),
         requestPort
       }
     });
@@ -328,7 +346,12 @@ describe("BLISP helpers", () => {
     const target = await new WebSerialBlispFlasher().connect();
 
     expect(target.transport).toBe("webserial-blisp");
-    expect(requestPort).not.toHaveBeenCalled();
-    expect(port.open).toHaveBeenCalledOnce();
+    expect(requestPort).toHaveBeenCalledOnce();
+    expect(authorizedPort.open).not.toHaveBeenCalled();
+    expect(chosenPort.open).toHaveBeenCalledOnce();
+    expect(onLog).toHaveBeenCalledWith(
+      "INFO",
+      "Previously authorized USB serial port found; opening the picker so you can confirm it or choose another port."
+    );
   });
 });
