@@ -209,6 +209,8 @@ export function AppShell() {
   const [logs, setLogs] = useState<LogLine[]>(initialLogs);
   const [activityOpen, setActivityOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [versionReadBusy, setVersionReadBusy] = useState(false);
+  const [versionInfoRead, setVersionInfoRead] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
   const [confirmations, setConfirmations] = useState([false, false, false]);
   const [prereleaseConfirmed, setPrereleaseConfirmed] = useState(false);
@@ -500,6 +502,7 @@ export function AppShell() {
       });
     }
     logoBuildIdRef.current += 1;
+    setVersionInfoRead(false);
     setTarget(undefined);
     setGeneratedLogo(undefined);
     setLogoDfuFile(undefined);
@@ -839,6 +842,53 @@ export function AppShell() {
     await connectUsbOnly();
   }, [connectUsbOnly]);
 
+  const readInstalledVersion = useCallback(async () => {
+    const backend = backendRef.current;
+    if (!target) {
+      addLog("WARN", "Connect a Pinecil over USB before reading the installed version.");
+      return;
+    }
+    if (!backend?.readInstalledFirmwareVersion) {
+      addLog("WARN", "Installed-version reads are only available for Pinecil V2 BLISP connections.");
+      return;
+    }
+    setBusy(true);
+    setVersionReadBusy(true);
+    setPhase("detect");
+    setProgress(0);
+    addLog("INFO", "Reading installed firmware and boot ROM versions.");
+    try {
+      const connectedAt = target.connectedAt;
+      const { version, bytesScanned, bootRomVersion } = await backend.readInstalledFirmwareVersion(setProgressFromEvent);
+      setTarget((current) => (
+        current?.connectedAt === connectedAt
+          ? { ...current, installedFirmwareVersion: version, bootRomVersion }
+          : current
+      ));
+      setVersionInfoRead(true);
+      setPhase("done");
+      setProgress(100);
+      if (version) {
+        addLog(
+          "OK",
+          bootRomVersion
+            ? `Installed IronOS version: ${version}; Boot ROM ${bootRomVersion} (found within ${bytesScanned.toLocaleString()} bytes).`
+            : `Installed IronOS version: ${version} (found within ${bytesScanned.toLocaleString()} bytes).`
+        );
+      } else {
+        addLog("WARN", `Scanned ${bytesScanned.toLocaleString()} bytes of flash and did not find an IronOS version string.`);
+        if (bootRomVersion) addLog("OK", `Boot ROM ${bootRomVersion}.`);
+      }
+    } catch (err) {
+      setPhase("fail");
+      setProgress(100);
+      addLog("ERROR", err instanceof Error ? err.message : "Unable to read installed firmware version.");
+    } finally {
+      setVersionReadBusy(false);
+      setBusy(false);
+    }
+  }, [addLog, setProgressFromEvent, target]);
+
   const connectBluetoothDemo = useCallback(() => {
     clearUsbState();
     bleRef.current = undefined;
@@ -1062,15 +1112,19 @@ export function AppShell() {
         : ""
       : "Use USB flash mode for flashing. Use normal powered mode for Bluetooth settings.";
   // What we show under the device name. Bluetooth talks to running IronOS so
-  // we get a build id. USB BLISP loads the eflash_loader and reads flash to
-  // recover the installed IronOS version, plus reports the BL70x boot ROM
-  // version separately. Both lines render in the sidebar so the user can
-  // compare "currently installed" vs the version they're about to flash.
+  // we get a build id. USB BLISP can read versions on demand to recover the
+  // installed IronOS version and the BL70x boot ROM version. Both lines render
+  // in the sidebar only after the explicit read so the user can compare
+  // "currently installed" vs the version they're about to flash.
   const sidebarFirmwareVersion =
     bleSnapshot?.buildId
       ?? (target?.transport === "demo" ? "v2.23-demo" : undefined)
       ?? target?.installedFirmwareVersion;
   const sidebarBootRomVersion = target?.bootRomVersion;
+  const canReadInstalledVersion =
+    target?.transport === "webserial-blisp" &&
+    typeof backendRef.current?.readInstalledFirmwareVersion === "function" &&
+    !versionInfoRead;
   const mobileModel = target?.model ?? (bluetoothConnected ? "v2" : undefined);
   const mobileTransport = usbConnected ? "USB" : bluetoothConnected ? "Bluetooth" : undefined;
   const mobileDisplayName = mobileModel && mobileTransport
@@ -1098,6 +1152,7 @@ export function AppShell() {
       <Sidebar
         bluetoothLabel={bluetoothLabel}
         busy={busy}
+        canReadInstalledVersion={canReadInstalledVersion}
         firmwareVersion={sidebarFirmwareVersion}
         bootRomVersion={sidebarBootRomVersion}
         modeAvailability={modeAvailability}
@@ -1105,7 +1160,9 @@ export function AppShell() {
         mode={mode}
         onDisconnect={disconnectTarget}
         onMode={changeMode}
+        onReadInstalledVersion={readInstalledVersion}
         onTheme={setTheme}
+        readingInstalledVersion={versionReadBusy}
         target={target}
         theme={theme}
       />

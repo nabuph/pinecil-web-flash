@@ -411,11 +411,13 @@ a {
 
 .sidebar-connect-btns {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
   justify-content: flex-start;
 }
 
 .sidebar-connect-btns .btn {
-  width: 50%;
+  width: 100%;
 }
 
 .sidebar-footer {

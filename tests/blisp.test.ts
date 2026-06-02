@@ -13,7 +13,7 @@ import {
   parseBlispFirmware,
   WebSerialBlispFlasher
 } from "@/lib/protocol/blisp";
-import type { FlashInput } from "@/lib/types";
+import type { FlashInput, FlashProgress } from "@/lib/types";
 
 describe("BLISP helpers", () => {
   afterEach(() => {
@@ -143,16 +143,73 @@ describe("BLISP helpers", () => {
       model: "v2",
       transport: "webserial-blisp",
       label: "Pinecil V2 BL70x flash mode",
-      portName: "USB 1a86:55d4",
-      bootRomVersion: "1.2.3.4"
+      portName: "USB 1a86:55d4"
     });
+    expect(target.bootRomVersion).toBeUndefined();
     // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then blisp's
     // baud-derived 'U' burst. Then command 0x10 once OK is seen.
+    expect(writes).toHaveLength(3);
     expect(writes[0]).toHaveLength(22);
     expect(new TextDecoder().decode(writes[0])).toBe("BOUFFALOLAB5555RESET\0\0");
     expect(writes[1]).toHaveLength(BL70X_HANDSHAKE_BURST_BYTES);
     expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
     expect(writes[2]).toEqual(encodeBlispCommand(0x10));
+  });
+
+  it("reads the installed IronOS version only when explicitly requested", async () => {
+    const writes: Uint8Array[] = [];
+    const versionBytes = new TextEncoder().encode("build v2.23");
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([0xff, 0xff, 0xff, 0xff]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([versionBytes.length, 0x00]),
+      versionBytes
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>({
+        write(chunk) {
+          writes.push(chunk);
+        }
+      })
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { requestPort: vi.fn(async () => port) }
+    });
+
+    const flasher = new WebSerialBlispFlasher();
+    const target = await flasher.connect();
+    const progress: FlashProgress[] = [];
+    const result = await flasher.readInstalledFirmwareVersion((event) => progress.push(event));
+
+    expect(target.installedFirmwareVersion).toBeUndefined();
+    expect(result).toEqual({
+      version: "v2.23",
+      bytesScanned: versionBytes.length,
+      bootRomVersion: "1.2.3.4"
+    });
+    expect(writes).toHaveLength(5);
+    expect(writes[3]).toEqual(encodeBlispCommand(0x10));
+    expect(writes[4]?.[0]).toBe(0x32);
+    expect(progress.some((event) => event.message === "Scanning flash for installed IronOS version")).toBe(true);
   });
 
   it("does not display the eflash_loader sentinel as a Boot ROM version", async () => {
@@ -190,7 +247,7 @@ describe("BLISP helpers", () => {
     expect(target.bootRomVersion).toBeUndefined();
   });
 
-  it("keeps displaying a real Boot ROM version after reconnecting to the same port in eflash_loader", async () => {
+  it("does not expose cached Boot ROM versions on connect", async () => {
     const sessions = [
       [
         new Uint8Array([0x4f, 0x4b]),
@@ -253,8 +310,8 @@ describe("BLISP helpers", () => {
 
     const secondTarget = await new WebSerialBlispFlasher().connect();
 
-    expect(firstTarget.bootRomVersion).toBe("9.8.7.6");
-    expect(secondTarget.bootRomVersion).toBe("9.8.7.6");
+    expect(firstTarget.bootRomVersion).toBeUndefined();
+    expect(secondTarget.bootRomVersion).toBeUndefined();
   });
 
   it("opens the picker when a Pinecil V2 serial port was previously authorized", async () => {

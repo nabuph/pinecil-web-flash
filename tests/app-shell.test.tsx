@@ -57,6 +57,65 @@ describe("AppShell connection actions", () => {
     expect(screen.getAllByText(/Flash mode/).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("reads the installed firmware version from the sidebar on demand", async () => {
+    const versionBytes = new TextEncoder().encode("build v2.23");
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x04, 0x00]),
+      new Uint8Array([0xff, 0xff, 0xff, 0xff]),
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([versionBytes.length, 0x00]),
+      versionBytes
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>()
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { requestPort: vi.fn(async () => port) }
+    });
+
+    await act(async () => {
+      render(<AppShell />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Connect USB" }).at(-1)!);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Read firmware" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Firmware v2.23")).not.toBeInTheDocument();
+    expect(screen.queryByText("Boot ROM 1.2.3.4")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Read firmware" }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Firmware v2.23")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Boot ROM 1.2.3.4")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Read firmware" })).not.toBeInTheDocument();
+  });
+
   it("connects the Bluetooth demo target from the splash controls", async () => {
     await act(async () => {
       render(<AppShell />);

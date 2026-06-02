@@ -213,9 +213,15 @@ IronOS version string.
 
 On connect:
 
-- load eflash_loader if possible
-- read/scan from firmware offset `0x2000`
-- display the installed IronOS version in the sidebar
+- handshake with the BL70x ROM
+
+From the sidebar:
+
+- the user can explicitly click "Read version"
+- the app loads eflash_loader if needed
+- the app reads/scans from firmware offset `0x2000`
+- the app displays the installed IronOS and BL70x boot ROM versions in the
+  sidebar together
 
 After flashing:
 
@@ -283,13 +289,10 @@ Possible future paths:
 
 ### Should Connect-Time Version Reads Be Optional?
 
-Reading the installed version is helpful, but it requires loading eflash_loader
-before the user clicks Flash. That means the chip may already be running the
-loader when flashing starts. The current refresh path handles this, but it adds
-complexity.
-
-An option to skip connect-time version reads could make connection simpler at
-the cost of losing sidebar version display until after flashing.
+Reading the installed version is helpful, but it requires loading eflash_loader.
+The app now skips this during connect and exposes an explicit sidebar action
+instead. That keeps USB connect focused on proving BL70x bootloader access, then
+lets the user opt into the more invasive flash-read path when they need it.
 
 ### Can Production Logs Be Even Quieter?
 

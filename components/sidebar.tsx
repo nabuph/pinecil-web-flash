@@ -1,6 +1,6 @@
 "use client";
 
-import { Bluetooth, Cpu, FileImage, Moon, Monitor, SlidersHorizontal, Sun, Unplug } from "lucide-react";
+import { Bluetooth, Cpu, FileImage, Loader2, Moon, Monitor, RefreshCw, SlidersHorizontal, Sun, Unplug } from "lucide-react";
 import type { ElementType } from "react";
 import { Pine64Logo } from "@/components/pine64-logo";
 import type { FlashTarget } from "@/lib/types";
@@ -31,6 +31,7 @@ export const footerLinks = [
 export function Sidebar({
   bluetoothLabel,
   busy,
+  canReadInstalledVersion,
   firmwareVersion,
   bootRomVersion,
   modeAvailability,
@@ -38,16 +39,18 @@ export function Sidebar({
   mode,
   onDisconnect,
   onMode,
+  onReadInstalledVersion,
   onTheme,
+  readingInstalledVersion,
   target,
   theme
 }: {
   bluetoothLabel: string;
   busy: boolean;
+  canReadInstalledVersion?: boolean;
   // IronOS firmware version reported either by Bluetooth (running IronOS)
-  // or by reading flash via the eflash_loader during BLISP connect. For the
-  // demo target this is a faked string. Undefined if we couldn't determine
-  // it.
+  // or by an explicit BLISP flash read. For the demo target this is a faked
+  // string. Undefined if we couldn't determine it.
   firmwareVersion?: string;
   // BL70x boot ROM version reported during BLISP handshake. Only set when
   // connected via USB in flash mode.
@@ -57,7 +60,9 @@ export function Sidebar({
   mode?: Mode;
   onDisconnect(): void;
   onMode(m: Mode): void;
+  onReadInstalledVersion?(): void;
   onTheme(t: ThemePreference): void;
+  readingInstalledVersion?: boolean;
   target?: FlashTarget;
   theme: ThemePreference;
 }) {
@@ -131,6 +136,17 @@ export function Sidebar({
 
         {connected ? (
           <div className="sidebar-connect-btns fade-in">
+            {canReadInstalledVersion && onReadInstalledVersion ? (
+              <button
+                className="btn btn-sm"
+                disabled={busy}
+                onClick={onReadInstalledVersion}
+                type="button"
+              >
+                {readingInstalledVersion ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
+                {readingInstalledVersion ? "Reading firmware" : "Read firmware"}
+              </button>
+            ) : null}
             <button
               className="btn btn-sm"
               disabled={busy}

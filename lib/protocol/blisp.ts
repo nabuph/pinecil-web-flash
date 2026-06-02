@@ -426,7 +426,6 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       await this.session.open();
       await this.handshake();
       this.bootloaderReady = true;
-      await this.tryLoadEflashLoaderAndReadVersion();
     } catch (err) {
       await this.close().catch(() => undefined);
       // The BL70x ROM bootloader only accepts the handshake for a few seconds
@@ -454,10 +453,63 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       label: "Pinecil V2 BL70x flash mode",
       portName: serialPortLabel(this.port),
       bootloader: "BL70x",
-      bootRomVersion: this.bootRomVersion,
       installedFirmwareVersion: this.installedFirmwareVersion,
       connectedAt: new Date().toISOString()
     };
+  }
+
+  async readInstalledFirmwareVersion(
+    onProgress: (event: FlashProgress) => void
+  ): Promise<{ version?: string; bytesScanned: number; bootRomVersion?: string }> {
+    if (!this.session) throw new Error("No BLISP serial session is connected.");
+    try {
+      const total = 256 * 1024;
+      onProgress({
+        phase: "detect",
+        message: "Preparing BL70x installed-version read",
+        current: 0,
+        total,
+        log: false
+      });
+      if (!this.bootloaderReady) {
+        await this.handshake(onProgress);
+        this.bootloaderReady = true;
+      }
+      if (!this.eflashLoaderReady) {
+        await this.ensureEflashLoader(onProgress, total);
+      } else {
+        await this.refreshEflashLoaderSession(onProgress, total);
+      }
+
+      onProgress({
+        phase: "verify",
+        message: "Scanning flash for installed IronOS version",
+        current: 0,
+        total,
+        log: false
+      });
+      let lastReported = 0;
+      const result = await this.readInstalledFirmwareVersionFromFlash(
+        undefined,
+        (scanned, scanTotal) => {
+          if (scanned - lastReported >= 32 * 1024 || scanned === scanTotal) {
+            lastReported = scanned;
+            onProgress({
+              phase: "verify",
+              message: `Scanning flash for version: ${(scanned / 1024) | 0} / ${(scanTotal / 1024) | 0} KiB`,
+              current: scanned,
+              total: scanTotal,
+              trace: true
+            });
+          }
+        }
+      );
+      this.installedFirmwareVersion = result.version;
+      return { ...result, bootRomVersion: this.bootRomVersion };
+    } catch (err) {
+      this.eflashLoaderReady = false;
+      throw err;
+    }
   }
 
   async flash(input: FlashInput, onProgress: (event: FlashProgress) => void): Promise<FlashResult> {
@@ -763,46 +815,6 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     await this.session?.close().catch(() => undefined);
     this.session = new SerialBlispSession(this.port);
     await this.session.open();
-  }
-
-  private async tryLoadEflashLoaderAndReadVersion(): Promise<void> {
-    if (!this.session) return;
-    const log = WebSerialBlispFlasher.onLog;
-    let step = "loading eflash_loader";
-    try {
-      log("INFO", "Loading eflash_loader to read installed firmware version.");
-      await this.ensureEflashLoader(
-        (event) => {
-          if (event.level === "warn") {
-            log("WARN", event.message);
-          }
-        },
-        1
-      );
-
-      step = "reading flash at IronOS firmware offset";
-      log("INFO", "Reading flash to detect installed IronOS version.");
-      let lastReported = 0;
-      const { version, bytesScanned } = await this.readInstalledFirmwareVersionFromFlash(
-        undefined,
-        (scanned, total) => {
-          if (scanned - lastReported >= 32 * 1024) {
-            lastReported = scanned;
-            log("INFO", `Scanning flash for version: ${(scanned / 1024) | 0} / ${(total / 1024) | 0} KiB`, { trace: true });
-          }
-        }
-      );
-      this.installedFirmwareVersion = version;
-      if (version) {
-        log("OK", `Installed IronOS version: ${version} (found within ${bytesScanned.toLocaleString()} bytes).`);
-      } else {
-        log("WARN", `Scanned ${bytesScanned.toLocaleString()} bytes of flash and did not find an IronOS version string.`);
-      }
-    } catch (err) {
-      this.eflashLoaderReady = false;
-      const message = err instanceof Error ? err.message : String(err);
-      log("WARN", `Unable to read installed firmware version while ${step}: ${message}`);
-    }
   }
 
   private async readInstalledFirmwareVersionFromFlash(
