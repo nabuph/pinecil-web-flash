@@ -7,6 +7,7 @@
     "prebuild": "node scripts/bundle-releases.mjs",
     "build": "next build",
     "bundle:releases": "node scripts/bundle-releases.mjs",
+    "catalog:rehash": "node scripts/bundle-releases.mjs --rehash-existing",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

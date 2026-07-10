@@ -6,11 +6,16 @@ import {
   LOGO_WIDTH
 } from "@/lib/logo/generator";
 import {
+  AmbiguousBlispWriteError,
   buildPinecilV2BootHeader,
   BL70X_HANDSHAKE_BURST_BYTES,
   encodeBlispCommand,
   eraseResponseTimeoutMs,
+  PINECIL_V2_MAX_FIRMWARE_LENGTH,
   parseBlispFirmware,
+  SerialBlispSession,
+  validatePinecilV2BootHeader,
+  writeBlispFlashChunkOnce,
   WebSerialBlispFlasher
 } from "@/lib/protocol/blisp";
 import type { FlashInput, FlashProgress } from "@/lib/types";
@@ -19,6 +24,7 @@ describe("BLISP helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     WebSerialBlispFlasher.onLog = () => undefined;
+    WebSerialBlispFlasher.onWillReset = () => undefined;
     Object.defineProperty(navigator, "serial", {
       configurable: true,
       value: undefined
@@ -35,11 +41,28 @@ describe("BLISP helpers", () => {
       model: "v2",
       kind: "firmware",
       fileName: "Pinecilv2_EN.bin",
-      bytes: new Uint8Array([1, 2, 3])
+      bytes: Uint8Array.from({ length: 4096 }, (_, index) => index & 0xff)
     };
     // Native blisp identifies a Pinecil V2 .bin as needing a boot struct, but
     // the browser path leaves the installed boot header at 0x0000 untouched.
     expect(parseBlispFirmware(input)).toMatchObject({ address: 0x2000, needsBootHeader: false });
+  });
+
+  it("rejects truncated, blank, and partition-overlapping Pinecil V2 firmware", () => {
+    const input: FlashInput = {
+      model: "v2",
+      kind: "firmware",
+      fileName: "Pinecilv2_EN.bin",
+      bytes: new Uint8Array(3)
+    };
+    expect(() => parseBlispFirmware(input)).toThrow(/too small/i);
+    expect(() => parseBlispFirmware({ ...input, bytes: new Uint8Array(4096).fill(0xff) })).toThrow(/blank/i);
+    expect(() => parseBlispFirmware({
+      ...input,
+      bytes: new Uint8Array(PINECIL_V2_MAX_FIRMWARE_LENGTH + 1)
+    })).toThrow(/reserved boot-logo region/i);
+    expect(() => parseBlispFirmware({ ...input, model: "v1", bytes: new Uint8Array(4096) }))
+      .toThrow(/only accepts Pinecil V2/i);
   });
 
   it("parses Pinecil V2 boot-logo DFUs to the model-specific logo offset", () => {
@@ -68,6 +91,57 @@ describe("BLISP helpers", () => {
     expect([...header.slice(164, 168)]).toEqual([0x00, 0x10, 0x00, 0x00]);
     expect([...header.slice(168, 172)]).toEqual([0x00, 0x20, 0x00, 0x00]);
     expect([...header.slice(172, 176)]).toEqual([0xef, 0xbe, 0xad, 0xde]);
+    expect(() => validatePinecilV2BootHeader(header)).not.toThrow();
+  });
+
+  it("rejects a boot header that cannot safely boot a payload-only update", () => {
+    const wrongOffset = buildPinecilV2BootHeader();
+    wrongOffset[128] = 0x00;
+    wrongOffset[129] = 0x30;
+    expect(() => validatePinecilV2BootHeader(wrongOffset)).toThrow(/points to/i);
+
+    const hashEnforced = buildPinecilV2BootHeader();
+    hashEnforced[118] &= ~0x02;
+    expect(() => validatePinecilV2BootHeader(hashEnforced)).toThrow(/image hash/i);
+  });
+
+  it("never resends a flash_write whose acknowledgement is ambiguous", async () => {
+    const command = vi.fn(async () => {
+      throw new Error("Timed out reading from BLISP serial port.");
+    });
+    const receiveResponse = vi.fn(async () => {
+      throw new Error("Timed out reading from BLISP serial port.");
+    });
+    const session = { command, receiveResponse, write: vi.fn(async () => undefined) };
+
+    await expect(writeBlispFlashChunkOnce(session, 0x2000, new Uint8Array([1, 2, 3])))
+      .rejects.toBeInstanceOf(AmbiguousBlispWriteError);
+    expect(command).toHaveBeenCalledOnce();
+    expect(receiveResponse).toHaveBeenCalledOnce();
+  });
+
+  it("uses one absolute response deadline across repeated pending frames", async () => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const port = {
+      open: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({}),
+      readable: new ReadableStream<Uint8Array>({
+        start(nextController) {
+          controller = nextController;
+        }
+      }),
+      writable: new WritableStream<Uint8Array>()
+    };
+    const session = new SerialBlispSession(port as unknown as SerialPort);
+    await session.open();
+    const interval = setInterval(() => controller?.enqueue(new Uint8Array([0x50, 0x44])), 5);
+    try {
+      await expect(session.receiveResponse(false, 35)).rejects.toThrow(/Timed out reading from BLISP/i);
+    } finally {
+      clearInterval(interval);
+      await session.close();
+    }
   });
 
   it("allows full firmware erases to run well past the nominal BLISP sector timing", () => {
@@ -99,7 +173,7 @@ describe("BLISP helpers", () => {
     });
 
     await expect(new WebSerialBlispFlasher().connect()).rejects.toThrow(/closed|reading|BLISP|bootloader/i);
-    expect(close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledTimes(2);
   });
 
   it("accepts serial ports only after a BLISP bootloader response", async () => {
@@ -146,14 +220,61 @@ describe("BLISP helpers", () => {
       portName: "USB 1a86:55d4"
     });
     expect(target.bootRomVersion).toBeUndefined();
-    // Handshake is: BOUFFALOLAB5555RESET probe (22 bytes) then blisp's
-    // baud-derived 'U' burst. Then command 0x10 once OK is seen.
-    expect(writes).toHaveLength(3);
-    expect(writes[0]).toHaveLength(22);
-    expect(new TextDecoder().decode(writes[0])).toBe("BOUFFALOLAB5555RESET\0\0");
-    expect(writes[1]).toHaveLength(BL70X_HANDSHAKE_BURST_BYTES);
-    expect(writes[1]?.every((b) => b === 0x55)).toBe(true);
-    expect(writes[2]).toEqual(encodeBlispCommand(0x10));
+    // State-aware connect first tries a U-only loader handshake, then uses
+    // get_boot_info to classify the responder as ROM or eflash_loader.
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toHaveLength(BL70X_HANDSHAKE_BURST_BYTES);
+    expect(writes[0]?.every((b) => b === 0x55)).toBe(true);
+    expect(writes[1]).toEqual(encodeBlispCommand(0x10));
+  });
+
+  it("reopens with a clean RX boundary before falling back to the ROM reset handshake", async () => {
+    const writesByOpen: Uint8Array[][] = [];
+    let activeReadable: ReadableStream<Uint8Array> | undefined;
+    let activeWritable: WritableStream<Uint8Array> | undefined;
+    const sessions = [
+      [],
+      [
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x4f, 0x4b]),
+        new Uint8Array([0x04, 0x00]),
+        new Uint8Array([1, 2, 3, 4])
+      ]
+    ];
+    const port = {
+      open: vi.fn(async () => {
+        const chunks = sessions.shift();
+        if (!chunks) throw new Error("No mock serial session configured.");
+        const writes: Uint8Array[] = [];
+        writesByOpen.push(writes);
+        activeReadable = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const chunk = chunks.shift();
+            if (chunk) controller.enqueue(chunk);
+            else controller.close();
+          }
+        });
+        activeWritable = new WritableStream<Uint8Array>({ write: (chunk) => { writes.push(chunk); } });
+      }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      get readable() { return activeReadable; },
+      get writable() { return activeWritable; }
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { requestPort: vi.fn(async () => port) }
+    });
+
+    await expect(new WebSerialBlispFlasher().connect()).resolves.toMatchObject({ model: "v2" });
+    expect(port.open).toHaveBeenCalledTimes(2);
+    expect(writesByOpen[0]).toHaveLength(1);
+    expect(writesByOpen[0]?.[0]?.every((byte) => byte === 0x55)).toBe(true);
+    expect(new TextDecoder().decode(writesByOpen[1]?.[0])).toBe("BOUFFALOLAB5555RESET\0\0");
+    expect(writesByOpen[1]?.[1]?.every((byte) => byte === 0x55)).toBe(true);
+    expect(writesByOpen[1]?.[2]).toEqual(encodeBlispCommand(0x10));
   });
 
   it("reads the installed IronOS version only when explicitly requested", async () => {
@@ -206,9 +327,9 @@ describe("BLISP helpers", () => {
       bytesScanned: versionBytes.length,
       bootRomVersion: "1.2.3.4"
     });
-    expect(writes).toHaveLength(5);
-    expect(writes[3]).toEqual(encodeBlispCommand(0x10));
-    expect(writes[4]?.[0]).toBe(0x32);
+    expect(writes).toHaveLength(4);
+    expect(writes[2]).toEqual(encodeBlispCommand(0x10));
+    expect(writes[3]?.[0]).toBe(0x32);
     expect(progress.some((event) => event.message === "Scanning flash for installed IronOS version")).toBe(true);
   });
 
@@ -245,6 +366,41 @@ describe("BLISP helpers", () => {
     const target = await new WebSerialBlispFlasher().connect();
 
     expect(target.bootRomVersion).toBeUndefined();
+  });
+
+  it("accepts an already-running eflash_loader that returns FL to get_boot_info", async () => {
+    const writes: Uint8Array[] = [];
+    const chunks = [
+      new Uint8Array([0x4f, 0x4b]),
+      new Uint8Array([0x46, 0x4c]),
+      new Uint8Array([0x01, 0x00])
+    ];
+    const port = {
+      open: vi.fn(async () => undefined),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+      getInfo: () => ({ usbVendorId: 0x1a86, usbProductId: 0x55d4 }),
+      readable: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        }
+      }),
+      writable: new WritableStream<Uint8Array>({ write: (chunk) => { writes.push(chunk); } })
+    };
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { requestPort: vi.fn(async () => port) }
+    });
+
+    await expect(new WebSerialBlispFlasher().connect()).resolves.toMatchObject({
+      transport: "webserial-blisp"
+    });
+    expect(writes).toHaveLength(2);
+    expect(writes[0]?.every((byte) => byte === 0x55)).toBe(true);
+    expect(writes[1]).toEqual(encodeBlispCommand(0x10));
   });
 
   it("does not expose cached Boot ROM versions on connect", async () => {

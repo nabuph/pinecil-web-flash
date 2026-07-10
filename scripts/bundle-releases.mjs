@@ -8,9 +8,10 @@
 // CI failures). The runtime falls back to the sample catalog when the file is
 // missing, so demos still work.
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = "Ralim/IronOS";
@@ -123,7 +124,46 @@ async function downloadTo(url, destination) {
   const buffer = Buffer.from(await res.arrayBuffer());
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, buffer);
-  return buffer.length;
+  return {
+    size: buffer.length,
+    sha256: createHash("sha256").update(buffer).digest("hex")
+  };
+}
+
+export async function rehashExistingCatalog({ logger = console } = {}) {
+  if (!existsSync(catalogPath)) {
+    throw new Error(`Existing release catalog not found at ${catalogPath}.`);
+  }
+
+  const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
+  if (!Array.isArray(catalog.releases)) {
+    throw new Error("Existing release catalog has an invalid releases array.");
+  }
+
+  let assetCount = 0;
+  let totalBytes = 0;
+  const firmwareRoot = resolve(firmwareDir) + sep;
+  for (const release of catalog.releases) {
+    for (const asset of release.assets ?? []) {
+      const relativeUrl = String(asset.browser_download_url ?? "").replace(/^\/+/, "");
+      const assetPath = resolve(publicDir, relativeUrl);
+      if (!assetPath.startsWith(firmwareRoot)) {
+        throw new Error(`Catalog asset path is outside public/firmware: ${relativeUrl || "(missing)"}.`);
+      }
+      const bytes = await readFile(assetPath);
+      asset.size = bytes.length;
+      asset.sha256 = createHash("sha256").update(bytes).digest("hex");
+      assetCount += 1;
+      totalBytes += bytes.length;
+    }
+  }
+
+  catalog.generatedAt = new Date().toISOString();
+  await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+  logger.log(
+    `[bundle-releases] Rehashed ${assetCount} existing assets in ${catalogPath} (${formatBytes(totalBytes)}).`
+  );
+  return { assetCount, totalBytes, catalogPath };
 }
 
 export function pickReleases(releases, { budgetBytes = releaseBundleBudgetBytes() } = {}) {
@@ -191,12 +231,13 @@ async function main() {
       if (!ASSET_NAMES.has(asset.name)) continue;
       const dest = join(tagDir, asset.name);
       console.log(`[bundle-releases]   ${release.tag_name}/${asset.name} (${(asset.size / 1024).toFixed(0)} KiB)`);
-      const size = await downloadTo(asset.browser_download_url, dest);
+      const { size, sha256 } = await downloadTo(asset.browser_download_url, dest);
       releaseBytes += size;
       localAssets.push({
         id: asset.id,
         name: asset.name,
         size,
+        sha256,
         content_type: asset.content_type,
         // Path is relative to the deployed root; the runtime prefixes basePath.
         browser_download_url: `firmware/${safeTag}/${asset.name}`
@@ -229,7 +270,8 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => {
+  const task = process.argv.includes("--rehash-existing") ? rehashExistingCatalog() : main();
+  task.catch((err) => {
     console.error("[bundle-releases] Failed:", err);
     process.exit(1);
   });

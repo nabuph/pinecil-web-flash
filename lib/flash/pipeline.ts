@@ -15,6 +15,23 @@ export interface PreparedInstallFile extends FlashInput {
   warnings: string[];
 }
 
+export async function verifyExpectedSha256(
+  bytes: Uint8Array,
+  expectedDigest: string | undefined,
+  label = "Asset"
+): Promise<string> {
+  if (!expectedDigest) {
+    throw new Error(`${label} has no SHA-256 digest. Rebuild the release catalog before flashing.`);
+  }
+  const actualDigest = await sha256Hex(bytes);
+  if (actualDigest !== expectedDigest.toLowerCase()) {
+    throw new Error(
+      `${label} SHA-256 mismatch (expected ${expectedDigest.slice(0, 16)}…, received ${actualDigest.slice(0, 16)}…).`
+    );
+  }
+  return actualDigest;
+}
+
 export async function prepareInstall(target: FlashTarget, selection: InstallSelection): Promise<PreparedInstallFile> {
   const warnings = validateInstallFileName(selection.fileName, target.model, selection.kind, selection.language);
   if (warnings.length) {
