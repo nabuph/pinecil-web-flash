@@ -434,7 +434,8 @@ export async function flashRead(
   session: BlispCommandSession,
   address: number,
   length: number,
-  chunkSize = 256
+  chunkSize = 256,
+  onProgress?: (read: number, total: number) => void
 ): Promise<Uint8Array> {
   const out = new Uint8Array(length);
   let offset = 0;
@@ -448,6 +449,7 @@ export async function flashRead(
     const slice = data.length > want ? data.slice(0, want) : data;
     out.set(slice, offset);
     offset += slice.length;
+    onProgress?.(offset, length);
     if (slice.length < want) break; // chip returned short — stop
   }
   return out.slice(0, offset);

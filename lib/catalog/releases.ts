@@ -6,6 +6,7 @@ interface GitHubReleaseAsset {
   size: number;
   browser_download_url: string;
   content_type?: string;
+  sha256?: string;
 }
 
 interface GitHubRelease {
@@ -47,7 +48,8 @@ export function classifyAsset(asset: GitHubReleaseAsset): FirmwareAsset | null {
       kind: "metadata",
       size: asset.size,
       downloadUrl: asset.browser_download_url,
-      contentType: asset.content_type
+      contentType: asset.content_type,
+      sha256: asset.sha256
     };
   }
 
@@ -65,7 +67,8 @@ export function classifyAsset(asset: GitHubReleaseAsset): FirmwareAsset | null {
     kind: isLogoDfu ? "bootLogo" : "firmware",
     size: asset.size,
     downloadUrl: asset.browser_download_url,
-    contentType: asset.content_type
+    contentType: asset.content_type,
+    sha256: asset.sha256
   };
 }
 

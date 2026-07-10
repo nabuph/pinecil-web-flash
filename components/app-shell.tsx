@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_LANGUAGES, compatibleFirmwareReleases, findFirmwareAsset, findMetadataAsset, firmwareFileName, normalizeReleases, sampleReleases } from "@/lib/catalog/releases";
 import { KNOWN_BLE_SETTINGS, PinecilBleClient } from "@/lib/ble/pinecil-ble";
-import { prepareInstall, flashPrepared } from "@/lib/flash/pipeline";
+import { prepareInstall, flashPrepared, verifyExpectedSha256 } from "@/lib/flash/pipeline";
 import { extractFirmwareFromZip, parseLanguagesFromMetadata } from "@/lib/firmware/zip";
 import { generateLogoFromImage } from "@/lib/logo/generator";
 import { WebSerialBlispFlasher } from "@/lib/protocol/blisp";
@@ -22,7 +22,7 @@ import type {
   PinecilModel,
   ReleaseChannel
 } from "@/lib/types";
-import { formatBytes, nowStamp } from "@/lib/utils/hash";
+import { formatBytes, nowStamp, sha256Hex } from "@/lib/utils/hash";
 import { AlertTriangle, Bluetooth, Loader2, Play, Unplug, Usb } from "lucide-react";
 import { Sidebar, type Mode, type ModeAvailability, type ThemePreference } from "@/components/sidebar";
 import { ActivityLog, type LogLine } from "@/components/activity-log";
@@ -281,9 +281,17 @@ export function AppShell() {
       if (!preserveDoneOnDisconnectRef.current) addLog("WARN", "USB cable disconnected.");
       disconnectListenerRef.current();
     };
+    WebSerialBlispFlasher.onWillReset = (source) => {
+      if (backendRef.current === source) preserveDoneOnDisconnectRef.current = true;
+    };
+    WebUsbDfuFlasher.onWillReset = (source) => {
+      if (backendRef.current === source) preserveDoneOnDisconnectRef.current = true;
+    };
     return () => {
       WebSerialBlispFlasher.onDisconnect = () => undefined;
       WebUsbDfuFlasher.onDisconnect = () => undefined;
+      WebSerialBlispFlasher.onWillReset = () => undefined;
+      WebUsbDfuFlasher.onWillReset = () => undefined;
     };
   }, [addLog]);
 
@@ -629,11 +637,20 @@ export function AppShell() {
       throw new Error("This firmware release has no downloadable asset. Rebuild with the release bundler enabled.");
     }
     const archive = await downloadAssetBytes(firmwareAsset.downloadUrl);
+    if (firmwareAsset.sha256) {
+      await verifyExpectedSha256(archive, firmwareAsset.sha256, "Firmware archive");
+    } else {
+      const archiveDigest = await sha256Hex(archive);
+      addLog(
+        "WARN",
+        `Legacy release catalog has no expected firmware digest; computed SHA-256 ${archiveDigest.slice(0, 16)}… before extraction.`
+      );
+    }
     const bytes = firmwareAsset.fileName.toLowerCase().endsWith(".zip")
       ? extractFirmwareFromZip(archive, activeModel, language)
       : archive;
     return prepareInstall(target, { kind: "firmware", fileName: firmwareFileName(activeModel, language), bytes, releaseTag: selectedRelease.tag, language });
-  }, [activeModel, downloadAssetBytes, firmwareAsset, language, selectedRelease, target]);
+  }, [activeModel, addLog, downloadAssetBytes, firmwareAsset, language, selectedRelease, target]);
 
   const prepareLogoForTarget = useCallback(async () => {
     if (!target) throw new Error("Connect a Pinecil before flashing a logo.");
@@ -653,13 +670,15 @@ export function AppShell() {
     if (kind === "firmware" && selectedRelease?.channel === "prerelease" && !prereleaseConfirmed) {
       addLog("WARN", "Confirm prerelease firmware before flashing."); return;
     }
+    // A previous successful reset may still have a short disconnect grace
+    // window. A new operation must never inherit it.
+    preserveDoneOnDisconnectRef.current = false;
     setBusy(true);
     try {
       setPhase("validate");
       setProgress(0);
       const prepared = kind === "firmware" ? await prepareFirmwareForTarget() : await prepareLogoForTarget();
       addLog("OK", `${prepared.fileName} validated (${formatBytes(prepared.bytes.length)}, SHA-256 ${prepared.sha256?.slice(0, 16)}...).`);
-      preserveDoneOnDisconnectRef.current = true;
       const result = await flashPrepared(target, backendRef.current, prepared, setProgressFromEvent);
       if (!result.ok) throw new Error(result.message);
       if (result.installedFirmwareVersion) {
@@ -852,6 +871,7 @@ export function AppShell() {
       addLog("WARN", "Installed-version reads are only available for Pinecil V2 BLISP connections.");
       return;
     }
+    preserveDoneOnDisconnectRef.current = false;
     setBusy(true);
     setVersionReadBusy(true);
     setPhase("detect");

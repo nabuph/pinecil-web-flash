@@ -44,12 +44,15 @@ The working sequence is:
      normal `run_image`
 5. Re-handshake with the running eflash_loader using only the `0x55` burst.
    Do not send the ROM `BOUFFALOLAB5555RESET` probe to the loader.
-6. Erase the firmware range using `flash_erase` command `0x30`.
-7. Write firmware chunks using `flash_write` command `0x31`.
-8. Run `program_check` command `0x3A`.
-9. Scan the written firmware region with `flash_read` command `0x32` to report
-   the installed IronOS version.
-10. Send reset command `0x21`; the device may disconnect or reset immediately.
+6. Read and validate the installed 176-byte boot header before a payload-only
+   firmware update.
+7. Erase the firmware range using `flash_erase` command `0x30`.
+8. Write firmware chunks using `flash_write` command `0x31`.
+9. Run `program_check` command `0x3A`.
+10. Read the complete written region back with `flash_read` command `0x32` and
+    require its SHA-256 to match the source payload.
+11. Extract the installed IronOS version from the verified read-back bytes.
+12. Send reset command `0x21`; the device may disconnect or reset immediately.
 
 ## Critical Details
 
@@ -68,6 +71,17 @@ The project still has `buildPinecilV2BootHeader()` and tests for the layout,
 but `parseBlispFirmware()` intentionally returns `needsBootHeader: false` for
 Pinecil V2 firmware.
 
+Before erasing firmware, the browser reads the existing header and requires:
+
+- `BFNP` and `FCFG` magic values
+- payload offset `0x2000`
+- payload-only (`no_segment`) boot configuration
+- image-hash checking disabled, because the preserved header cannot contain the
+  hash of the replacement payload
+
+If this preflight fails, the browser refuses to write and directs the user to
+native `blisp` for boot-header recovery.
+
 ### eflash_loader Is Required For Flash Access
 
 The ROM bootloader can handshake, report boot info, and load a RAM image, but
@@ -83,9 +97,12 @@ The eflash_loader stage differs from ROM in two important ways:
   loader is running. Treating that as "not connected" and falling back to ROM
   traffic can desynchronize the session.
 
-The current code refreshes an already-running loader by trying an eflash_loader
-handshake first. If the stream looks stale, it reopens the serial session and
-tries the loader handshake again before considering the ROM load path.
+Fresh and refreshed sessions first try one eflash_loader U-only handshake. A
+normal boot-info version classifies ROM, `ff.ff.ff.ff` classifies the loader,
+and a boot-info `FL` response is also accepted as a loader variant. Only after a
+clean close/reopen does the code fall back to the ROM reset-probe handshake.
+This prevents ROM reset traffic and stale command responses from being sent to
+or mistaken for an already-running loader.
 
 ### Web Serial Read Robustness
 
@@ -147,11 +164,29 @@ commands:
   120 s
 - program check uses a 120 s timeout
 
-For flash writes, the current code waits for a normal OK, then tries a late OK
-window if the command times out. If an ACK appears late or in trailing buffered
-data, the write is considered complete. Otherwise the same chunk is retried up
-to three times. Rewriting identical data into already-erased/already-written
-flash is acceptable because it does not require changing bits from 0 back to 1.
+For flash writes, the code waits for a normal OK, then continues waiting through
+one late-ACK window if the command times out. If that deadline also expires, the
+operation fails closed and reopens the serial session; it never resends the
+ambiguous write. BLISP responses have no transaction IDs, so a retry plus two
+eventual OK frames would shift every subsequent response by one command.
+
+All command response timeouts are absolute deadlines. Repeated `PD` pending
+frames do not restart the timeout indefinitely.
+
+### Input And Read-Back Integrity
+
+The release bundler records SHA-256 for every downloaded archive. The browser
+requires the selected firmware archive to match that catalog digest before
+extraction. Legacy local catalogs created before digests were added remain
+usable for hardware recovery/testing: the browser computes and logs their
+archive SHA-256, then relies on the same payload validation and full device
+read-back verification. The BLISP path also rejects firmware that is
+undersized, blank, larger than the region before the boot-logo sector, or
+intended for another model.
+
+After `program_check`, the browser reads the entire payload back and compares
+SHA-256 with the source bytes. A truncated read or digest mismatch is a hard
+failure; version-string detection runs only on bytes that passed this check.
 
 ## Browser-Specific Adaptations
 
@@ -160,16 +195,12 @@ flash is acceptable because it does not require changing bits from 0 back to 1.
 Browsers cannot silently grant a serial port the first time. The user must pick
 the port at least once.
 
-After permission exists, the app can call `navigator.serial.getPorts()` and
-auto-select a previously authorized port. Current behavior:
+After permission exists, the app calls `navigator.serial.getPorts()` only to
+provide a useful log message. Current behavior:
 
-- If exactly one authorized port matches the known Pinecil V2 USB serial ID
-  (`1a86:55d4`), use it.
-- If no authorized port has matching USB IDs but exactly one authorized serial
-  port exists, use it. This handles macOS/Chrome cases where the picker shows
-  the device as `CDC Virtual ComPort (... ) - Paired` but `getInfo()` does not
-  expose the expected IDs.
-- If multiple candidates exist, open the picker.
+- Always open the picker so the user confirms the port for the current action.
+- Report whether one or more previously authorized ports—including known
+  Pinecil V2 ID `1a86:55d4`—were found.
 - The manual picker is intentionally broad. A strict VID/PID filter caused the
   Pinecil serial port to disappear on at least one tested setup.
 
@@ -187,8 +218,9 @@ Current handling:
   handling for V1 DFU.
 - `PinecilBleClient.onDisconnect(source)` clears Bluetooth state when the
   normal-mode BLE connection drops.
-- Expected post-flash resets are handled without showing a misleading USB
-  unplug warning.
+- Expected-disconnect handling is armed only immediately before the BLISP reset
+  command or final DFU manifestation command. An unplug during erase, write, or
+  verification is always reported as an unsafe cable disconnect.
 - Close paths tolerate already-closed/already-disconnected devices.
 
 ### Logging
@@ -226,7 +258,8 @@ From the sidebar:
 After flashing:
 
 - run program check first
-- scan only the just-written firmware payload length
+- read back and SHA-256 verify exactly the just-written payload length
+- scan the verified read-back bytes for the version string
 - update the connected target with the new version
 
 Limiting post-flash scanning to the written payload matters when downgrading.
@@ -308,6 +341,10 @@ flash session" entry while preserving detailed errors.
 - Keep ROM and eflash_loader handshake behavior separate.
 - Treat `FL` responses as meaningful state, not just generic failures.
 - Avoid canceling read promises on timeout; preserve pending reads.
+- Never resend a write after an ambiguous ACK timeout without first
+  re-establishing a clean protocol boundary.
+- Keep firmware bounds, archive digests, boot-header preflight, and read-back
+  verification as hard gates before reporting success.
 - Make Web Serial changes with hardware testing, not unit tests alone.
 - Keep production log filtering separate from dev trace availability.
 - When changing pacing or chunk sizes, document the exact hardware test matrix

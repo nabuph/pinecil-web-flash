@@ -8,9 +8,10 @@ describe("release catalog", () => {
         id: 1,
         name: "Pinecilv2.zip",
         size: 123,
-        browser_download_url: "https://example.test/Pinecilv2.zip"
+        browser_download_url: "https://example.test/Pinecilv2.zip",
+        sha256: "abc123"
       })
-    ).toMatchObject({ model: "v2", kind: "firmware" });
+    ).toMatchObject({ model: "v2", kind: "firmware", sha256: "abc123" });
     expect(
       classifyAsset({
         id: 2,

@@ -1,11 +1,16 @@
+import { LOGO_ADDRESSES } from "@/lib/logo/generator";
 import { validateLogoDfuFile } from "@/lib/logo/validation";
 import {
   flashWriteChunkSize,
+  flashRead,
+  findIronOsVersion,
   findIronOsVersionInFlash,
   loadEflashLoader,
-  patchBl70xEflashLoader
+  patchBl70xEflashLoader,
+  type BlispCommandSession
 } from "@/lib/protocol/blisp-eflash";
 import type { FlashInput, FlashProgress, FlashResult, FlashTarget, FlasherBackend } from "@/lib/types";
+import { sha256Hex } from "@/lib/utils/hash";
 
 const DEFAULT_BAUD_RATE = 460_800;
 const BL70X_HANDSHAKE_BYTE_MULTIPLIER = 0.003;
@@ -19,22 +24,24 @@ type WebSerial = NonNullable<Navigator["serial"]>;
 const PINECIL_V2_SERIAL_FILTERS: SerialPortFilterLike[] = [
   { usbVendorId: 0x1a86, usbProductId: 0x55d4 }
 ];
-const PINECIL_V2_FIRMWARE_OFFSET = 0x2000;
+export const PINECIL_V2_FIRMWARE_OFFSET = 0x2000;
+export const PINECIL_V2_LOGO_OFFSET = LOGO_ADDRESSES.v2;
+export const PINECIL_V2_MAX_FIRMWARE_LENGTH = PINECIL_V2_LOGO_OFFSET - PINECIL_V2_FIRMWARE_OFFSET;
+const PINECIL_V2_MIN_FIRMWARE_LENGTH = 4096;
 const BL70X_FLASH_SECTOR_SIZE = 4096;
 const BL70X_ERASE_TIME_PER_SECTOR_MS = 300;
 const BL70X_MIN_ERASE_RESPONSE_TIMEOUT_MS = 30000;
 const BL70X_MAX_ERASE_RESPONSE_TIMEOUT_MS = 120000;
 const BL70X_FLASH_WRITE_TIMEOUT_MS = 3000;
 const BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS = 2000;
-const BL70X_FLASH_WRITE_RETRY_ATTEMPTS = 3;
-const BL70X_FLASH_WRITE_RETRY_DRAIN_MS = 150;
-const BL70X_FLASH_WRITE_RETRY_DELAY_MS = 50;
 const BL70X_FLASH_WRITE_INTER_CHUNK_DELAY_MS = 10;
 const BL70X_POST_ERASE_SETTLE_MS = 100;
 const BL70X_PROGRAM_CHECK_TIMEOUT_MS = 120000;
 const BL70X_WRITE_PROGRESS_INTERVAL_BYTES = 16 * 1024;
 const BLISP_WRITE_FLUSH_YIELD_MS = 5;
 const BLISP_SERIAL_BUFFER_SIZE = 64 * 1024;
+const BL70X_EFLASH_LOADER_LENGTH = 59_200;
+const BL70X_EFLASH_LOADER_SHA256 = "e35083e8c0bf2b1491920453b15f62ae3f61667e6d0a1993f1c934bd6e2b9a9e";
 type Bytes = Uint8Array<ArrayBufferLike>;
 
 type BlispResponse = "OK" | "PD";
@@ -135,7 +142,16 @@ async function defaultEflashLoaderProvider(): Promise<Uint8Array> {
   const res = await fetch(url, { cache: "force-cache" });
   if (!res.ok) throw new Error(`Failed to fetch eflash_loader (${res.status} ${res.statusText}).`);
   const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length !== BL70X_EFLASH_LOADER_LENGTH) {
+    throw new Error(
+      `Bundled eflash_loader has ${bytes.length.toLocaleString()} bytes; expected ${BL70X_EFLASH_LOADER_LENGTH.toLocaleString()}.`
+    );
+  }
   patchBl70xEflashLoader(bytes);
+  const digest = await sha256Hex(bytes);
+  if (digest !== BL70X_EFLASH_LOADER_SHA256) {
+    throw new Error("Bundled eflash_loader failed its SHA-256 integrity check.");
+  }
   return bytes;
 }
 
@@ -185,7 +201,40 @@ function concatBytes(parts: Bytes[]): Uint8Array {
   return out;
 }
 
+export class AmbiguousBlispWriteError extends Error {
+  constructor() {
+    super("BLISP flash_write did not return an acknowledgement before the late-response deadline.");
+    this.name = "AmbiguousBlispWriteError";
+  }
+}
+
+export async function writeBlispFlashChunkOnce(
+  session: BlispCommandSession,
+  address: number,
+  chunk: Uint8Array
+): Promise<{ lateAck: boolean }> {
+  const payload = concatBytes([le32(address), chunk]);
+  try {
+    await session.command(0x31, payload, true, false, BL70X_FLASH_WRITE_TIMEOUT_MS);
+    return { lateAck: false };
+  } catch (err) {
+    if (!(err instanceof Error) || !/Timed out reading from BLISP/.test(err.message)) {
+      throw err;
+    }
+    if (!session.receiveResponse) throw new AmbiguousBlispWriteError();
+    try {
+      await session.receiveResponse(false, BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS);
+      return { lateAck: true };
+    } catch {
+      throw new AmbiguousBlispWriteError();
+    }
+  }
+}
+
 export function parseBlispFirmware(input: FlashInput): { payload: Uint8Array; address: number; needsBootHeader: boolean } {
+  if (input.model !== "v2") {
+    throw new Error("The Web Serial BLISP backend only accepts Pinecil V2 firmware and boot logos.");
+  }
   if (input.kind === "bootLogo") {
     const logo = validateLogoDfuFile(input.bytes, input.model);
     return {
@@ -193,6 +242,20 @@ export function parseBlispFirmware(input: FlashInput): { payload: Uint8Array; ad
       address: logo.address,
       needsBootHeader: false
     };
+  }
+
+  if (input.bytes.length < PINECIL_V2_MIN_FIRMWARE_LENGTH) {
+    throw new Error(
+      `Pinecil V2 firmware is too small (${input.bytes.length.toLocaleString()} bytes); expected at least ${PINECIL_V2_MIN_FIRMWARE_LENGTH.toLocaleString()} bytes.`
+    );
+  }
+  if (input.bytes.length > PINECIL_V2_MAX_FIRMWARE_LENGTH) {
+    throw new Error(
+      `Pinecil V2 firmware is too large (${input.bytes.length.toLocaleString()} bytes) and would overlap the reserved boot-logo region.`
+    );
+  }
+  if (input.bytes.every((byte) => byte === 0x00) || input.bytes.every((byte) => byte === 0xff)) {
+    throw new Error("Pinecil V2 firmware contains only blank bytes.");
   }
 
   // Plain Pinecil V2 IronOS .bin files contain the firmware payload that the
@@ -205,6 +268,31 @@ export function parseBlispFirmware(input: FlashInput): { payload: Uint8Array; ad
     address: PINECIL_V2_FIRMWARE_OFFSET,
     needsBootHeader: false
   };
+}
+
+export function validatePinecilV2BootHeader(header: Uint8Array): void {
+  if (header.length !== 176) {
+    throw new Error(`Existing Pinecil V2 boot header is truncated (${header.length} of 176 bytes).`);
+  }
+  const ascii = (offset: number) => new TextDecoder().decode(header.slice(offset, offset + 4));
+  if (ascii(0) !== "BFNP" || ascii(8) !== "FCFG") {
+    throw new Error("Existing Pinecil V2 boot header has invalid BFNP/FCFG magic values.");
+  }
+
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  const bootConfig = view.getUint32(116, true);
+  const flashOffset = view.getUint32(128, true);
+  if (flashOffset !== PINECIL_V2_FIRMWARE_OFFSET) {
+    throw new Error(
+      `Existing Pinecil V2 boot header points to 0x${flashOffset.toString(16)}, not firmware offset 0x${PINECIL_V2_FIRMWARE_OFFSET.toString(16)}.`
+    );
+  }
+  if ((bootConfig & (1 << 8)) === 0) {
+    throw new Error("Existing Pinecil V2 boot header expects segmented firmware and cannot safely boot a payload-only IronOS image.");
+  }
+  if ((bootConfig & (1 << 17)) === 0) {
+    throw new Error("Existing Pinecil V2 boot header enforces an image hash that would become invalid after a payload-only update.");
+  }
 }
 
 export function buildPinecilV2BootHeader(): Uint8Array {
@@ -235,7 +323,7 @@ export function buildPinecilV2BootHeader(): Uint8Array {
   ]);
 }
 
-class SerialBlispSession {
+export class SerialBlispSession implements BlispCommandSession {
   private reader?: ReadableStreamDefaultReader<Uint8Array>;
   private writer?: WritableStreamDefaultWriter<Uint8Array>;
   // Bytes received from the chip but not yet consumed by readChunk/readExact.
@@ -367,19 +455,26 @@ class SerialBlispSession {
   }
 
   async receiveResponse(expectPayload: boolean, headTimeoutMs = 1200): Promise<Uint8Array> {
+    const deadline = Date.now() + headTimeoutMs;
+    const readBeforeDeadline = async (length: number): Promise<Uint8Array> => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Timed out reading from BLISP serial port.");
+      return this.readExact(length, remaining);
+    };
+
     for (;;) {
-      const head = await this.readExact(2, headTimeoutMs);
+      const head = await readBeforeDeadline(2);
       const code = new TextDecoder().decode(head) as BlispResponse | "FL";
       if (code === "PD") continue;
       if (code === "FL") {
-        const err = await this.readExact(2, 200);
+        const err = await readBeforeDeadline(2);
         throw new Error(`BLISP device returned failure ${err[0] | (err[1] << 8)}.`);
       }
       if (code !== "OK") throw new Error(`Unexpected BLISP response ${Array.from(head).join(" ")}.`);
       if (!expectPayload) return new Uint8Array();
-      const sizeBytes = await this.readExact(2, 200);
+      const sizeBytes = await readBeforeDeadline(2);
       const size = sizeBytes[0] | (sizeBytes[1] << 8);
-      return this.readExact(size, 200);
+      return readBeforeDeadline(size);
     }
   }
 }
@@ -410,6 +505,10 @@ export class WebSerialBlispFlasher implements FlasherBackend {
   // the user pulled the USB cable). app-shell uses this to clear connected
   // state instead of waiting for the next operation to fail.
   static onDisconnect: (source: WebSerialBlispFlasher) => void = () => undefined;
+  // Fired immediately before a verified flash requests a device reset. The UI
+  // uses this narrow window to distinguish the expected reset disconnect from
+  // an unsafe cable removal during erase/write/verify.
+  static onWillReset: (source: WebSerialBlispFlasher) => void = () => undefined;
   private disconnectListener?: () => void;
 
   async connect(): Promise<FlashTarget> {
@@ -424,8 +523,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     this.port.addEventListener("disconnect", this.disconnectListener);
     try {
       await this.session.open();
-      await this.handshake();
-      this.bootloaderReady = true;
+      await this.establishInitialState();
     } catch (err) {
       await this.close().catch(() => undefined);
       // The BL70x ROM bootloader only accepts the handshake for a few seconds
@@ -471,10 +569,6 @@ export class WebSerialBlispFlasher implements FlasherBackend {
         total,
         log: false
       });
-      if (!this.bootloaderReady) {
-        await this.handshake(onProgress);
-        this.bootloaderReady = true;
-      }
       if (!this.eflashLoaderReady) {
         await this.ensureEflashLoader(onProgress, total);
       } else {
@@ -508,6 +602,10 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       return { ...result, bootRomVersion: this.bootRomVersion };
     } catch (err) {
       this.eflashLoaderReady = false;
+      this.bootloaderReady = false;
+      if (err instanceof Error && /Timed out reading from BLISP|Unexpected BLISP response|Serial port closed while reading/.test(err.message)) {
+        await this.reopenSerialSession().catch(() => undefined);
+      }
       throw err;
     }
   }
@@ -519,14 +617,13 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       const total = firmware.payload.length + (firmware.needsBootHeader ? 176 : 0);
       onProgress({ phase: "flash", message: "Preparing BL70x flash session", current: 0, total });
 
-      if (!this.bootloaderReady) {
-        await this.handshake(onProgress);
-        this.bootloaderReady = true;
-      }
       if (!this.eflashLoaderReady) {
         await this.ensureEflashLoader(onProgress, total);
       } else {
         await this.refreshEflashLoaderSession(onProgress, total);
+      }
+      if (input.kind === "firmware") {
+        await this.preflightExistingBootHeader(onProgress, total);
       }
       if (firmware.needsBootHeader) {
         const bootHeader = buildPinecilV2BootHeader();
@@ -541,42 +638,73 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       // we use for erase rather than the default 1.2s.
       await this.session.command(0x3a, new Uint8Array(), true, false, BL70X_PROGRAM_CHECK_TIMEOUT_MS);
       onProgress({ phase: "verify", message: "BLISP program check returned OK", current: total, total, level: "success" });
-      let flashedFirmwareVersion: string | undefined;
-      if (input.kind === "firmware") {
-        onProgress({ phase: "verify", message: "Reading flashed IronOS version", current: total, total });
-        try {
-          const { version, bytesScanned } = await this.readInstalledFirmwareVersionFromFlash(firmware.payload.length);
-          if (version) {
-            this.installedFirmwareVersion = version;
-            flashedFirmwareVersion = version;
+
+      onProgress({ phase: "verify", message: "Reading flash back for SHA-256 verification", current: 0, total });
+      let lastReadbackProgress = 0;
+      const readback = await flashRead(
+        this.session,
+        firmware.address,
+        firmware.payload.length,
+        1024,
+        (read, readTotal) => {
+          if (read === readTotal || read - lastReadbackProgress >= 32 * 1024) {
+            lastReadbackProgress = read;
             onProgress({
               phase: "verify",
-              message: `Installed IronOS version now ${version} (found within ${bytesScanned.toLocaleString()} bytes)`,
-              current: total,
-              total,
-              level: "success"
-            });
-          } else {
-            onProgress({
-              phase: "verify",
-              message: `Program check passed, but no IronOS version string was found in ${bytesScanned.toLocaleString()} bytes.`,
-              current: total,
-              total,
-              level: "warn"
+              message: `Verifying read-back ${read.toLocaleString()} of ${readTotal.toLocaleString()} bytes`,
+              current: read,
+              total: readTotal,
+              trace: true
             });
           }
-        } catch (err) {
+        }
+      );
+      if (readback.length !== firmware.payload.length) {
+        throw new Error(
+          `BLISP read-back was truncated (${readback.length.toLocaleString()} of ${firmware.payload.length.toLocaleString()} bytes).`
+        );
+      }
+      const [expectedDigest, actualDigest] = await Promise.all([
+        sha256Hex(firmware.payload),
+        sha256Hex(readback)
+      ]);
+      if (actualDigest !== expectedDigest) {
+        throw new Error(
+          `BLISP read-back SHA-256 mismatch (expected ${expectedDigest.slice(0, 16)}…, received ${actualDigest.slice(0, 16)}…).`
+        );
+      }
+      onProgress({
+        phase: "verify",
+        message: `Flash read-back SHA-256 verified (${actualDigest.slice(0, 16)}…)`,
+        current: total,
+        total,
+        level: "success"
+      });
+
+      let flashedFirmwareVersion: string | undefined;
+      if (input.kind === "firmware") {
+        const version = findIronOsVersion(readback);
+        if (version) {
+          this.installedFirmwareVersion = version;
+          flashedFirmwareVersion = version;
           onProgress({
             phase: "verify",
-            message: err instanceof Error
-              ? `Program check passed, but installed version read failed: ${err.message}`
-              : "Program check passed, but installed version read failed.",
+            message: `Installed IronOS version now ${version}`,
+            current: total,
+            total,
+            level: "success"
+          });
+        } else {
+          onProgress({
+            phase: "verify",
+            message: `Read-back verification passed, but no IronOS version string was found in ${readback.length.toLocaleString()} bytes.`,
             current: total,
             total,
             level: "warn"
           });
         }
       }
+      WebSerialBlispFlasher.onWillReset(this);
       await this.session.command(0x21, new Uint8Array(), true).catch(() => undefined);
       return {
         ok: true,
@@ -589,6 +717,9 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     } catch (err) {
       this.bootloaderReady = false;
       this.eflashLoaderReady = false;
+      if (err instanceof Error && /Timed out reading from BLISP|Unexpected BLISP response|Serial port closed while reading/.test(err.message)) {
+        await this.reopenSerialSession().catch(() => undefined);
+      }
       throw err;
     }
   }
@@ -624,9 +755,10 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     inEflashLoader: boolean;
     getBootInfo: boolean;
     onProgress?: (event: FlashProgress) => void;
+    attempts?: number;
   }): Promise<void> {
     if (!this.session) throw new Error("No BLISP serial session is connected.");
-    const { inEflashLoader, getBootInfo, onProgress } = options;
+    const { inEflashLoader, getBootInfo, onProgress, attempts = 5 } = options;
     onProgress?.({
       phase: "detect",
       message: inEflashLoader ? "Re-handshaking with eflash_loader" : "Sending BLISP handshake",
@@ -645,7 +777,7 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     const U_BURST = new Uint8Array(BL70X_HANDSHAKE_BURST_BYTES).fill(0x55);
 
     let lastResponse = new Uint8Array();
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (!inEflashLoader) {
         await this.session.write(RESET_PROBE);
         // blisp calls sp_drain on macOS between writes to make sure the
@@ -674,7 +806,28 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       lastResponse = view;
       if (findOkInResponse(view) >= 0) {
         if (getBootInfo) {
-          const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true);
+          let bootInfo: Uint8Array;
+          try {
+            bootInfo = await this.session.command(0x10, new Uint8Array(), false, true);
+          } catch (err) {
+            if (isBlispFailureError(err)) {
+              // Some eflash_loader builds answer get_boot_info with FL instead
+              // of the ff.ff.ff.ff sentinel. The handshake itself still proves
+              // that the loader is alive, so classify it without falling back
+              // to more ROM reset traffic.
+              this.eflashLoaderReady = true;
+              this.bootloaderReady = true;
+              onProgress?.({
+                phase: "detect",
+                message: "eflash_loader already active",
+                current: 1,
+                total: 1,
+                trace: true
+              });
+              return;
+            }
+            throw err;
+          }
           // First 4 bytes of the boot info payload are the BL70x ROM
           // version. Stored on the instance so connect() can put it on the
           // FlashTarget for the UI to display.
@@ -687,6 +840,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
           } else if (displayBootRomVersion) {
             this.bootRomVersion = displayBootRomVersion;
           }
+          this.eflashLoaderReady = eflashLoaderActive;
+          this.bootloaderReady = true;
           onProgress?.({
             phase: "detect",
             message: displayBootRomVersion
@@ -713,7 +868,52 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     const tail = lastResponse.length
       ? ` Last bytes: ${Array.from(lastResponse).map((b) => b.toString(16).padStart(2, "0")).join(" ")}.`
       : " No bytes received from the chip.";
-    throw new Error(`Timed out reading from BLISP serial port.${tail}`);
+    throw new Error(`Timed out reading from BLISP serial port after ${attempts} handshake attempt(s).${tail}`);
+  }
+
+  private async establishInitialState(onProgress?: (event: FlashProgress) => void): Promise<void> {
+    if (!this.session) throw new Error("No BLISP serial session is connected.");
+
+    // A device left in eflash_loader after a failed/aborted operation accepts a
+    // U-only handshake. Try that once before sending the ROM-only reset probe.
+    // The follow-up boot-info response classifies ROM (normal version), loader
+    // (ff sentinel), or loader variants that return FL.
+    try {
+      await this.runHandshake({
+        inEflashLoader: true,
+        getBootInfo: false,
+        onProgress,
+        attempts: 1
+      });
+      try {
+        const bootInfo = await this.session.command(0x10, new Uint8Array(), false, true, 600);
+        const eflashLoaderActive = isEflashLoaderBootInfoVersion(bootInfo.slice(0, 4));
+        const bootRomVersion = formatBl70xBootRomVersion(bootInfo);
+        if (bootRomVersion) {
+          this.bootRomVersion = bootRomVersion;
+          cacheBootRomVersion(this.port, bootRomVersion);
+        } else if (eflashLoaderActive) {
+          this.bootRomVersion = cachedBootRomVersion(this.port);
+        }
+        this.eflashLoaderReady = eflashLoaderActive;
+        this.bootloaderReady = true;
+        return;
+      } catch (err) {
+        if (isBlispFailureError(err)) {
+          this.eflashLoaderReady = true;
+          this.bootloaderReady = true;
+          return;
+        }
+        throw err;
+      }
+    } catch {
+      // A timed-out reader promise must not be reused by the ROM handshake;
+      // reopen to establish a clean RX boundary first.
+      await this.reopenSerialSession();
+    }
+
+    await this.handshake(onProgress);
+    this.bootloaderReady = true;
   }
 
   private async ensureEflashLoader(
@@ -721,6 +921,11 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     total: number
   ): Promise<void> {
     if (!this.session) throw new Error("No BLISP serial session is connected.");
+
+    if (!this.bootloaderReady) {
+      await this.establishInitialState(onProgress);
+      if (this.eflashLoaderReady) return;
+    }
 
     // Match blisp_common_prepare_flash: first try get_boot_info to see what is
     // currently answering. A version field of ff.ff.ff.ff means the RAM
@@ -755,16 +960,20 @@ export class WebSerialBlispFlasher implements FlasherBackend {
           await this.confirmEflashLoaderReady(onProgress, total, "loader-state probe");
           return;
         } catch {
+          await this.reopenSerialSession().catch(() => undefined);
           throw err;
         }
       }
+      // The failed probe may leave reader.read() pending. Reopen before any
+      // handshake so a late probe response cannot be mistaken for handshake OK.
+      await this.reopenSerialSession();
+      await this.establishInitialState(onProgress);
+      if (this.eflashLoaderReady) return;
+      inRomBootloader = this.bootloaderReady;
     }
 
     if (!inRomBootloader) {
-      onProgress({ phase: "detect", message: "Re-handshaking with BL70x ROM", current: 0, total, trace: true });
-      await this.handshake(onProgress);
-      this.bootloaderReady = true;
-      await this.session.readChunk(40);
+      throw new Error("Unable to establish a BL70x ROM or eflash_loader session.");
     }
 
     onProgress({ phase: "detect", message: "Loading eflash_loader for flash access", current: 0, total });
@@ -805,6 +1014,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
         await this.confirmEflashLoaderReady(onProgress, total, "refreshed eflash_loader session");
       } catch {
         this.eflashLoaderReady = false;
+        this.bootloaderReady = false;
+        await this.reopenSerialSession();
         await this.ensureEflashLoader(onProgress, total);
       }
     }
@@ -815,6 +1026,8 @@ export class WebSerialBlispFlasher implements FlasherBackend {
     await this.session?.close().catch(() => undefined);
     this.session = new SerialBlispSession(this.port);
     await this.session.open();
+    this.bootloaderReady = false;
+    this.eflashLoaderReady = false;
   }
 
   private async readInstalledFirmwareVersionFromFlash(
@@ -829,6 +1042,35 @@ export class WebSerialBlispFlasher implements FlasherBackend {
       undefined,
       onProgress
     );
+  }
+
+  private async preflightExistingBootHeader(
+    onProgress: (event: FlashProgress) => void,
+    total: number
+  ): Promise<void> {
+    if (!this.session) throw new Error("No BLISP serial session is connected.");
+    onProgress({
+      phase: "validate",
+      message: "Validating existing Pinecil V2 boot header",
+      current: 0,
+      total
+    });
+    const header = await flashRead(this.session, 0, 176, 176);
+    try {
+      validatePinecilV2BootHeader(header);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${detail} The browser flasher will not rewrite flash address 0x0000; use native blisp to restore a known-good boot header first.`
+      );
+    }
+    onProgress({
+      phase: "validate",
+      message: "Existing Pinecil V2 boot header is safe for a payload-only update",
+      current: 0,
+      total,
+      level: "success"
+    });
   }
 
   private async eraseAndWrite(
@@ -885,59 +1127,25 @@ export class WebSerialBlispFlasher implements FlasherBackend {
           { trace: true }
         );
       }
-      const payload = concatBytes([le32(chunkAddress), chunk]);
-      let written = false;
-      let lastError: unknown;
-      for (let attempt = 1; attempt <= BL70X_FLASH_WRITE_RETRY_ATTEMPTS && !written; attempt += 1) {
-        try {
-          await this.session.command(0x31, payload, true, false, BL70X_FLASH_WRITE_TIMEOUT_MS);
-          written = true;
-          break;
-        } catch (err) {
-          lastError = err;
-          if (!(err instanceof Error) || !/Timed out reading from BLISP/.test(err.message)) {
-            break;
-          }
-
-          // Web Serial occasionally loses an ACK even though the page write
-          // completed. Wait a little longer, then drain one last chunk before
-          // retrying the exact same page. Reprogramming identical data into an
-          // erased/already-written flash page is safe because no bits need to
-          // flip from 0 back to 1.
-          try {
-            await this.session.receiveResponse(false, BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS);
-            written = true;
-            log(
-              "WARN",
-              `BLISP flash_write late OK at 0x${chunkAddress.toString(16).padStart(8, "0")} after ${BL70X_FLASH_WRITE_TIMEOUT_MS}+${BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS} ms`
-            );
-            break;
-          } catch {
-            const trailing = await this.session.readChunk(BL70X_FLASH_WRITE_RETRY_DRAIN_MS);
-            if (findOkInResponse(trailing) >= 0) {
-              written = true;
-              log(
-                "WARN",
-                `BLISP flash_write recovered trailing OK at 0x${chunkAddress.toString(16).padStart(8, "0")} after timeout`
-              );
-              break;
-            }
-          }
-
-          if (attempt < BL70X_FLASH_WRITE_RETRY_ATTEMPTS) {
-            log(
-              "WARN",
-              `Retrying BLISP flash_write at 0x${chunkAddress.toString(16).padStart(8, "0")} (attempt ${attempt + 1}/${BL70X_FLASH_WRITE_RETRY_ATTEMPTS})`
-            );
-            await delay(BL70X_FLASH_WRITE_RETRY_DELAY_MS);
-          }
+      try {
+        const { lateAck } = await writeBlispFlashChunkOnce(this.session, chunkAddress, chunk);
+        if (lateAck) {
+          log(
+            "WARN",
+            `BLISP flash_write late OK at 0x${chunkAddress.toString(16).padStart(8, "0")} after ${BL70X_FLASH_WRITE_TIMEOUT_MS}+${BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS} ms`
+          );
         }
-      }
-      if (!written) {
-        const message = lastError instanceof Error ? lastError.message : String(lastError);
+      } catch (err) {
+        if (!(err instanceof AmbiguousBlispWriteError)) {
+          throw err;
+        }
+        // The outstanding read may still resolve later. Reopen the port now so
+        // a future user-initiated retry starts with an empty RX boundary.
+        await this.reopenSerialSession().catch(() => undefined);
         throw new Error(
-          `BLISP flash_write failed at 0x${chunkAddress.toString(16).padStart(8, "0")} ` +
-            `(${offset.toLocaleString()} of ${bytes.length.toLocaleString()} bytes, chunk ${chunk.length}, attempts ${BL70X_FLASH_WRITE_RETRY_ATTEMPTS}, timeout ${BL70X_FLASH_WRITE_TIMEOUT_MS}+${BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS} ms): ${message}`
+          `BLISP flash_write acknowledgement was lost at 0x${chunkAddress.toString(16).padStart(8, "0")} ` +
+            `(${offset.toLocaleString()} of ${bytes.length.toLocaleString()} bytes, chunk ${chunk.length}, timeout ${BL70X_FLASH_WRITE_TIMEOUT_MS}+${BL70X_FLASH_WRITE_LATE_OK_TIMEOUT_MS} ms). ` +
+            "Flashing stopped without resending the ambiguous write; retry the full flash operation."
         );
       }
       sent += chunk.length;

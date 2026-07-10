@@ -177,6 +177,7 @@ export class WebUsbDfuFlasher implements FlasherBackend {
   private interfaceNumber = 0;
   private disconnectListener?: (event: Event) => void;
   static onDisconnect: (source: WebUsbDfuFlasher) => void = () => undefined;
+  static onWillReset: (source: WebUsbDfuFlasher) => void = () => undefined;
 
   async connect(): Promise<FlashTarget> {
     if (!navigator.usb) throw new Error("WebUSB is not available in this browser.");
@@ -238,6 +239,10 @@ export class WebUsbDfuFlasher implements FlasherBackend {
       }
     }
 
+    // The zero-length DNLOAD starts DFU manifestation and may immediately
+    // reset/disconnect the device. Only arm expected-disconnect handling now,
+    // after all firmware blocks have completed successfully.
+    WebUsbDfuFlasher.onWillReset(this);
     await this.sendDfuCommand(DFU_DNLOAD, 0, new Uint8Array());
     await this.pollStatus();
     onProgress({ phase: "verify", message: "DFU download complete", current: total, total, level: "success" });
